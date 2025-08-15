@@ -1,0 +1,42 @@
+{
+  "test_images/slight_blur_good.jpg": {
+    "blur_score": 176.54583383668418,
+    "blur_category": "slightly_blurry",
+    "filename": "slight_blur_good.jpg",
+    "aesthetic_score": 3.8,
+    "aesthetic_rating": "fair",
+    "combined_score": 2.99,
+    "recommendation": "skip",
+    "action": "Not recommended"
+  },
+  "test_images/blurry_image.jpg": {
+    "blur_score": 111.79998808178476,
+    "blur_category": "slightly_blurry",
+    "filename": "blurry_image.jpg",
+    "aesthetic_score": 3.8,
+    "aesthetic_rating": "fair",
+    "combined_score": 2.73,
+    "recommendation": "skip",
+    "action": "Not recommended"
+  },
+  "test_images/sharp_good.jpg": {
+    "blur_score": 4135.153448458086,
+    "blur_category": "sharp",
+    "filename": "sharp_good.jpg",
+    "aesthetic_score": 4.0,
+    "aesthetic_rating": "fair",
+    "combined_score": 6.4,
+    "recommendation": "maybe",
+    "action": "Sharp but average aesthetics - use if needed"
+  },
+  "test_images/low_quality.jpg": {
+    "blur_score": 128.97618956095377,
+    "blur_category": "slightly_blurry",
+    "filename": "low_quality.jpg",
+    "aesthetic_score": 4.3,
+    "aesthetic_rating": "fair",
+    "combined_score": 3.1,
+    "recommendation": "skip",
+    "action": "Not recommended"
+  }
+}

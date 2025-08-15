@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Yearbook Photo Selector</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .upload-section {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .upload-area {
+            border: 3px dashed #ddd;
+            border-radius: 8px;
+            padding: 60px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #f0f2ff;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5567d8;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+
+        .progress-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e2e8f0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .results-section {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            display: none;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #f7fafc;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-card h3 {
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .stat-card .number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .filters {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .filter-btn:hover {
+            border-color: #667eea;
+        }
+
+        .filter-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .photo-card {
+            background: white;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .photo-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+        }
+
+        .photo-card.selected {
+            border-color: #48bb78;
+            box-shadow: 0 0 0 3px rgba(72, 187, 120, 0.2);
+        }
+
+        .photo-card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+
+        .photo-info {
+            padding: 15px;
+        }
+
+        .photo-filename {
+            font-weight: bold;
+            margin-bottom: 10px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .photo-scores {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .score-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .recommendation {
+            padding: 8px;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 12px;
+        }
+
+        .rec-use {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .rec-enhance {
+            background: #feebc8;
+            color: #7c2d12;
+        }
+
+        .rec-maybe {
+            background: #bee3f8;
+            color: #2c5282;
+        }
+
+        .rec-skip {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .action-bar {
+            position: sticky;
+            bottom: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+        }
+
+        .selected-count {
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.1);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📸 Yearbook Photo Selector</h1>
+            <p>AI-powered photo analysis for perfect yearbook selections</p>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="upload-section" id="uploadSection">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <h2>Drop your photos here</h2>
+                <p style="margin: 20px 0; color: #718096;">or</p>
+                <button class="btn btn-primary">Browse Files</button>
+                <input type="file" class="file-input" id="fileInput" multiple accept="image/*">
+                <p style="margin-top: 20px; color: #a0aec0; font-size: 14px;">
+                    Supports JPG, PNG, TIFF up to 500MB total
+                </p>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+            <h2>Analyzing Photos...</h2>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill">0%</div>
+            </div>
+            <p id="progressText">Processing image 0 of 0...</p>
+        </div>
+
+        <!-- Results Section -->
+        <div class="results-section" id="resultsSection">
+            <h2 style="margin-bottom: 20px;">Analysis Results</h2>
+            
+            <!-- Statistics -->
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card">
+                    <h3>Total Photos</h3>
+                    <div class="number" id="statTotal">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Ready to Use</h3>
+                    <div class="number" id="statUse">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Need Enhancement</h3>
+                    <div class="number" id="statEnhance">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Maybe</h3>
+                    <div class="number" id="statMaybe">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Skip</h3>
+                    <div class="number" id="statSkip">0</div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="filters">
+                <button class="filter-btn active" data-filter="all">All Photos</button>
+                <button class="filter-btn" data-filter="use">Ready to Use</button>
+                <button class="filter-btn" data-filter="enhance">Need Enhancement</button>
+                <button class="filter-btn" data-filter="maybe">Maybe</button>
+                <button class="filter-btn" data-filter="skip">Skip</button>
+            </div>
+
+            <!-- Photo Grid -->
+            <div class="photo-grid" id="photoGrid"></div>
+        </div>
+
+        <!-- Action Bar -->
+        <div class="action-bar" id="actionBar">
+            <div class="selected-count">
+                <span id="selectedCount">0</span> photos selected
+            </div>
+            <div>
+                <button class="btn btn-secondary" onclick="selectRecommended()">Select Recommended</button>
+                <button class="btn btn-primary" onclick="downloadSelected()">Download Selected</button>
+                <button class="btn btn-secondary" onclick="exportReport()">Export Report</button>
+                <button class="btn btn-danger" onclick="resetAll()">Start Over</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentJobId = null;
+        let currentResults = [];
+        let selectedPhotos = new Set();
+        let currentFilter = 'all';
+
+        // Upload handling
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        // Handle file upload
+        async function handleFiles(files) {
+            if (files.length === 0) return;
+
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('files[]', file);
+            }
+
+            // Hide upload, show progress
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'block';
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.job_id) {
+                    currentJobId = data.job_id;
+                    startPolling();
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                alert('Upload failed. Please try again.');
+                resetAll();
+            }
+        }
+
+        // Poll for job status
+        function startPolling() {
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/status/${currentJobId}`);
+                    const data = await response.json();
+
+                    // Update progress
+                    const progress = Math.round(data.progress || 0);
+                    document.getElementById('progressFill').style.width = `${progress}%`;
+                    document.getElementById('progressFill').textContent = `${progress}%`;
+                    document.getElementById('progressText').textContent = 
+                        `Processing image ${data.processed_files} of ${data.total_files}...`;
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollInterval);
+                        loadResults();
+                    } else if (data.status === 'error') {
+                        clearInterval(pollInterval);
+                        alert('Analysis failed: ' + data.error);
+                        resetAll();
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 1000);
+        }
+
+        // Load and display results
+        async function loadResults() {
+            try {
+                const response = await fetch(`/results/${currentJobId}`);
+                const data = await response.json();
+
+                currentResults = data.results;
+                
+                // Update stats
+                document.getElementById('statTotal').textContent = data.stats.total;
+                document.getElementById('statUse').textContent = data.stats.use;
+                document.getElementById('statEnhance').textContent = data.stats.enhance;
+                document.getElementById('statMaybe').textContent = data.stats.maybe;
+                document.getElementById('statSkip').textContent = data.stats.skip;
+
+                // Display photos
+                displayPhotos();
+
+                // Show results section
+                document.getElementById('progressSection').style.display = 'none';
+                document.getElementById('resultsSection').style.display = 'block';
+                document.getElementById('actionBar').style.display = 'flex';
+
+            } catch (error) {
+                console.error('Error loading results:', error);
+                alert('Failed to load results');
+            }
+        }
+
+        // Display photos in grid
+        function displayPhotos() {
+            const grid = document.getElementById('photoGrid');
+            grid.innerHTML = '';
+
+            const filtered = currentFilter === 'all' 
+                ? currentResults 
+                : currentResults.filter(p => p.recommendation === currentFilter);
+
+            filtered.forEach(photo => {
+                const card = document.createElement('div');
+                card.className = `photo-card ${selectedPhotos.has(photo.filename) ? 'selected' : ''}`;
+                card.innerHTML = `
+                    <img src="/image/${currentJobId}/${photo.filename}" alt="${photo.filename}">
+                    <div class="photo-info">
+                        <div class="photo-filename" title="${photo.filename}">${photo.filename}</div>
+                        <div class="photo-scores">
+                            <span>Blur: <span class="score-badge">${photo.blur_category}</span></span>
+                            <span>Aesthetic: <span class="score-badge">${photo.aesthetic_score.toFixed(1)}/10</span></span>
+                        </div>
+                        <div class="photo-scores">
+                            <span>Combined: <strong>${photo.combined_score.toFixed(1)}/10</strong></span>
+                        </div>
+                        <div class="recommendation rec-${photo.recommendation}">
+                            ${photo.recommendation}
+                        </div>
+                    </div>
+                `;
+
+                card.addEventListener('click', () => toggleSelection(photo.filename, card));
+                grid.appendChild(card);
+            });
+        }
+
+        // Toggle photo selection
+        function toggleSelection(filename, card) {
+            if (selectedPhotos.has(filename)) {
+                selectedPhotos.delete(filename);
+                card.classList.remove('selected');
+            } else {
+                selectedPhotos.add(filename);
+                card.classList.add('selected');
+            }
+            updateSelectedCount();
+        }
+
+        // Update selected count
+        function updateSelectedCount() {
+            document.getElementById('selectedCount').textContent = selectedPhotos.size;
+        }
+
+        // Filter buttons
+        document.querySelectorAll('.filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentFilter = btn.dataset.filter;
+                displayPhotos();
+            });
+        });
+
+        // Select recommended photos
+        function selectRecommended() {
+            selectedPhotos.clear();
+            currentResults.forEach(photo => {
+                if (photo.recommendation === 'use' || photo.recommendation === 'enhance') {
+                    selectedPhotos.add(photo.filename);
+                }
+            });
+            displayPhotos();
+            updateSelectedCount();
+        }
+
+        // Download selected photos
+        async function downloadSelected() {
+            if (selectedPhotos.size === 0) {
+                alert('Please select photos to download');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/download_selection/${currentJobId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({selected: Array.from(selectedPhotos)})
+                });
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `yearbook_selection_${currentJobId}.zip`;
+                a.click();
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Download failed');
+            }
+        }
+
+        // Export report
+        async function exportReport() {
+            window.open(`/export_report/${currentJobId}`, '_blank');
+        }
+
+        // Reset everything
+        function resetAll() {
+            if (currentJobId) {
+                fetch(`/cleanup/${currentJobId}`, {method: 'DELETE'});
+            }
+            currentJobId = null;
+            currentResults = [];
+            selectedPhotos.clear();
+            currentFilter = 'all';
+            
+            document.getElementById('uploadSection').style.display = 'block';
+            document.getElementById('progressSection').style.display = 'none';
+            document.getElementById('resultsSection').style.display = 'none';
+            document.getElementById('actionBar').style.display = 'none';
+            
+            fileInput.value = '';
+        }
+    </script>
+</body>
+</html>
