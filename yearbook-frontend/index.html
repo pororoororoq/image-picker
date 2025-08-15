@@ -39,6 +39,27 @@
             opacity: 0.9;
         }
 
+        .config-section {
+            background: #fffbf0;
+            border: 2px solid #f6e05e;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .config-section.show {
+            display: block;
+        }
+
+        .config-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+
         .upload-section {
             background: white;
             border-radius: 12px;
@@ -105,6 +126,11 @@
         .btn-danger {
             background: #f56565;
             color: white;
+        }
+
+        .btn-warning {
+            background: #f6e05e;
+            color: #744210;
         }
 
         .progress-section {
@@ -312,6 +338,42 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        .error-message {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            display: none;
+        }
+
+        .setup-instructions {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+
+        .setup-instructions h2 {
+            margin-bottom: 20px;
+            color: #2d3748;
+        }
+
+        .setup-instructions ol {
+            margin-left: 20px;
+            line-height: 1.8;
+        }
+
+        .code-block {
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+        }
     </style>
 </head>
 <body>
@@ -321,8 +383,41 @@
             <p>AI-powered photo analysis for perfect yearbook selections</p>
         </div>
 
+        <!-- Configuration Section -->
+        <div class="config-section" id="configSection">
+            <strong>⚠️ Backend API URL Required</strong>
+            <p style="margin-top: 10px;">Enter your backend API URL (e.g., https://your-backend.herokuapp.com or http://localhost:5000)</p>
+            <input type="text" id="apiUrl" class="config-input" placeholder="https://your-backend-api.com" value="">
+            <button class="btn btn-warning" onclick="saveApiUrl()" style="margin-top: 10px;">Save & Continue</button>
+        </div>
+
+        <!-- Setup Instructions -->
+        <div class="setup-instructions" id="setupInstructions" style="display: none;">
+            <h2>🚀 Quick Setup Guide</h2>
+            <p>This frontend needs a backend API to work. Choose one option:</p>
+            
+            <h3 style="margin-top: 20px;">Option 1: Local Backend (Testing)</h3>
+            <ol>
+                <li>Run your Flask backend locally: <code class="code-block">python app.py</code></li>
+                <li>Enter <strong>http://localhost:5000</strong> as the API URL above</li>
+            </ol>
+
+            <h3 style="margin-top: 20px;">Option 2: Deploy Backend (Production)</h3>
+            <p>Deploy your backend to one of these services:</p>
+            <ul style="margin-left: 20px; margin-top: 10px;">
+                <li><strong>Render.com</strong> (Free tier available)</li>
+                <li><strong>Railway.app</strong> (Simple deployment)</li>
+                <li><strong>Heroku</strong> (Paid only)</li>
+                <li><strong>Google Cloud Run</strong> (Pay per use)</li>
+            </ul>
+            <p style="margin-top: 15px;">Then enter your deployed backend URL above.</p>
+        </div>
+
+        <!-- Error Message -->
+        <div class="error-message" id="errorMessage"></div>
+
         <!-- Upload Section -->
-        <div class="upload-section" id="uploadSection">
+        <div class="upload-section" id="uploadSection" style="display: none;">
             <div class="upload-area" id="uploadArea">
                 <div class="upload-icon">📁</div>
                 <h2>Drop your photos here</h2>
@@ -400,10 +495,71 @@
     </div>
 
     <script>
+        let API_URL = localStorage.getItem('yearbook_api_url') || '';
         let currentJobId = null;
         let currentResults = [];
         let selectedPhotos = new Set();
         let currentFilter = 'all';
+
+        // Check for API URL on load
+        window.addEventListener('DOMContentLoaded', () => {
+            if (API_URL) {
+                document.getElementById('apiUrl').value = API_URL;
+                checkBackendConnection();
+            } else {
+                document.getElementById('configSection').classList.add('show');
+                document.getElementById('setupInstructions').style.display = 'block';
+            }
+        });
+
+        // Save API URL
+        function saveApiUrl() {
+            const url = document.getElementById('apiUrl').value.trim();
+            if (!url) {
+                showError('Please enter a valid API URL');
+                return;
+            }
+            
+            // Remove trailing slash if present
+            API_URL = url.replace(/\/$/, '');
+            localStorage.setItem('yearbook_api_url', API_URL);
+            checkBackendConnection();
+        }
+
+        // Check backend connection
+        async function checkBackendConnection() {
+            try {
+                const response = await fetch(`${API_URL}/`, {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                
+                if (response.ok) {
+                    document.getElementById('configSection').style.display = 'none';
+                    document.getElementById('setupInstructions').style.display = 'none';
+                    document.getElementById('uploadSection').style.display = 'block';
+                    hideError();
+                } else {
+                    throw new Error('Backend not responding');
+                }
+            } catch (error) {
+                showError(`Cannot connect to backend at ${API_URL}. Please check the URL and ensure the backend is running.`);
+                document.getElementById('configSection').classList.add('show');
+                document.getElementById('setupInstructions').style.display = 'block';
+                document.getElementById('uploadSection').style.display = 'none';
+            }
+        }
+
+        // Error handling
+        function showError(message) {
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('errorMessage').style.display = 'none';
+        }
 
         // Upload handling
         const uploadArea = document.getElementById('uploadArea');
@@ -443,12 +599,18 @@
             // Hide upload, show progress
             document.getElementById('uploadSection').style.display = 'none';
             document.getElementById('progressSection').style.display = 'block';
+            hideError();
 
             try {
-                const response = await fetch('/upload', {
+                const response = await fetch(`${API_URL}/upload`, {
                     method: 'POST',
-                    body: formData
+                    body: formData,
+                    mode: 'cors'
                 });
+
+                if (!response.ok) {
+                    throw new Error(`Upload failed: ${response.statusText}`);
+                }
 
                 const data = await response.json();
                 if (data.job_id) {
@@ -457,7 +619,7 @@
                 }
             } catch (error) {
                 console.error('Upload error:', error);
-                alert('Upload failed. Please try again.');
+                showError('Upload failed. Please check your backend connection and try again.');
                 resetAll();
             }
         }
@@ -466,7 +628,14 @@
         function startPolling() {
             const pollInterval = setInterval(async () => {
                 try {
-                    const response = await fetch(`/status/${currentJobId}`);
+                    const response = await fetch(`${API_URL}/status/${currentJobId}`, {
+                        mode: 'cors'
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to get status');
+                    }
+                    
                     const data = await response.json();
 
                     // Update progress
@@ -481,11 +650,13 @@
                         loadResults();
                     } else if (data.status === 'error') {
                         clearInterval(pollInterval);
-                        alert('Analysis failed: ' + data.error);
+                        showError('Analysis failed: ' + data.error);
                         resetAll();
                     }
                 } catch (error) {
                     console.error('Polling error:', error);
+                    clearInterval(pollInterval);
+                    showError('Lost connection to backend. Please refresh and try again.');
                 }
             }, 1000);
         }
@@ -493,7 +664,14 @@
         // Load and display results
         async function loadResults() {
             try {
-                const response = await fetch(`/results/${currentJobId}`);
+                const response = await fetch(`${API_URL}/results/${currentJobId}`, {
+                    mode: 'cors'
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to load results');
+                }
+                
                 const data = await response.json();
 
                 currentResults = data.results;
@@ -515,7 +693,7 @@
 
             } catch (error) {
                 console.error('Error loading results:', error);
-                alert('Failed to load results');
+                showError('Failed to load results. Please try again.');
             }
         }
 
@@ -532,7 +710,7 @@
                 const card = document.createElement('div');
                 card.className = `photo-card ${selectedPhotos.has(photo.filename) ? 'selected' : ''}`;
                 card.innerHTML = `
-                    <img src="/image/${currentJobId}/${photo.filename}" alt="${photo.filename}">
+                    <img src="${API_URL}/image/${currentJobId}/${photo.filename}" alt="${photo.filename}">
                     <div class="photo-info">
                         <div class="photo-filename" title="${photo.filename}">${photo.filename}</div>
                         <div class="photo-scores">
@@ -600,11 +778,16 @@
             }
 
             try {
-                const response = await fetch(`/download_selection/${currentJobId}`, {
+                const response = await fetch(`${API_URL}/download_selection/${currentJobId}`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({selected: Array.from(selectedPhotos)})
+                    body: JSON.stringify({selected: Array.from(selectedPhotos)}),
+                    mode: 'cors'
                 });
+
+                if (!response.ok) {
+                    throw new Error('Download failed');
+                }
 
                 const blob = await response.blob();
                 const url = window.URL.createObjectURL(blob);
@@ -614,19 +797,19 @@
                 a.click();
             } catch (error) {
                 console.error('Download error:', error);
-                alert('Download failed');
+                showError('Download failed. Please try again.');
             }
         }
 
         // Export report
-        async function exportReport() {
-            window.open(`/export_report/${currentJobId}`, '_blank');
+        function exportReport() {
+            window.open(`${API_URL}/export_report/${currentJobId}`, '_blank');
         }
 
         // Reset everything
         function resetAll() {
             if (currentJobId) {
-                fetch(`/cleanup/${currentJobId}`, {method: 'DELETE'});
+                fetch(`${API_URL}/cleanup/${currentJobId}`, {method: 'DELETE', mode: 'cors'});
             }
             currentJobId = null;
             currentResults = [];
@@ -639,6 +822,7 @@
             document.getElementById('actionBar').style.display = 'none';
             
             fileInput.value = '';
+            hideError();
         }
     </script>
 </body>
