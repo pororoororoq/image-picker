@@ -1,7 +1,7 @@
 flask==2.3.3
 flask-cors==4.0.0
 werkzeug==2.3.7
-opencv-python-headless==4.8.1.78
+opencv-python-headless==4.8.0.74
 pillow==10.0.1
 numpy==1.24.3
 torch==2.0.1
