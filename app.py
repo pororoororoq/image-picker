@@ -70,8 +70,20 @@ class AnalysisJob:
 
 @app.route('/')
 def index():
-    """Serve the main page"""
-    return render_template('index.html')
+    """API root endpoint"""
+    return jsonify({
+        'status': 'ok',
+        'message': 'Yearbook Photo Analyzer API',
+        'version': '1.0.0',
+        'endpoints': {
+            'upload': '/upload',
+            'status': '/status/<job_id>',
+            'results': '/results/<job_id>',
+            'image': '/image/<job_id>/<filename>',
+            'download': '/download_selection/<job_id>',
+            'export': '/export_report/<job_id>'
+        }
+    })
 
 @app.route('/upload', methods=['POST'])
 def upload_files():
@@ -280,6 +292,14 @@ def enhance_image():
     """Placeholder for image enhancement endpoint"""
     # This will be implemented when you add the enhancement feature
     return jsonify({'message': 'Enhancement feature coming soon'}), 501
+
+@app.route('/health')
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat()
+    })
 
 if __name__ == '__main__':
     # Run in debug mode for development
