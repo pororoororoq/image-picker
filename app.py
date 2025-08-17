@@ -126,8 +126,16 @@ def analyze_photos_background(job_id, folder_path):
         return
     
     try:
-        # Initialize analyzer
+        # Initialize analyzer with HuggingFace URL
+        from blur_detector import BlurDetector
+        from aesthetic_scorer import AestheticScorer  # Use the API version
+        from photo_analyzer import PhotoAnalyzer
+        
+        # Get HuggingFace Space URL from environment
+        hf_url = os.getenv('HF_SPACE_URL', 'https://your-username-yearbook-photo-analyzer.hf.space')
+        
         analyzer = PhotoAnalyzer()
+        analyzer.aesthetic_scorer = AestheticScorer(hf_url)  # Override with API version
         
         # Custom progress callback
         def progress_callback(current_file, processed_count):
