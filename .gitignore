@@ -1,1 +1,36 @@
+# Virtual Environment
 venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Test outputs
+test_images/
+*.json
+*.html
+*.txt
+*.jpg
+*.jpeg
+*.png
+*.zip
+
+# Folders created by app
+uploads/
+results/
+enhanced/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
