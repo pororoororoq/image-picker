@@ -150,7 +150,6 @@ def analyze_photos_background(job_id, folder_path):
     """Run photo analysis in background with HuggingFace"""
     job = processing_jobs.get(job_id)
     if not job:
-        print(f"Job {job_id} not found!")
         return
     
     try:
@@ -166,12 +165,8 @@ def analyze_photos_background(job_id, folder_path):
         print(f"Using HuggingFace Space: {hf_url}")
         
         # Initialize scorers
-        blur_detector = BlurDetector()
+        blur_detector = BlurDetector()  # Keep as fallback
         aesthetic_scorer = AestheticScorer(hf_url)
-        
-        # Check if HuggingFace is connected
-        print(f"HuggingFace ML available: {aesthetic_scorer.ml_available}")
-        print(f"Gradio client connected: {aesthetic_scorer.client is not None}")
         
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -179,8 +174,6 @@ def analyze_photos_background(job_id, folder_path):
                 if os.path.splitext(f)[1].lower() in image_extensions]
         
         total_files = len(files)
-        print(f"Found {total_files} images to process")
-        
         job.total_files = total_files
         job.status = 'processing'
         
@@ -196,47 +189,60 @@ def analyze_photos_background(job_id, folder_path):
             job.current_file = filename
             
             try:
-                # Get blur score
-                blur_score, blur_category = blur_detector.detect_blur_laplacian(filepath)
-                print(f"  Blur: {blur_score:.2f} ({blur_category})")
+                # Get ALL scores from HuggingFace (including blur!)
+                hf_result = aesthetic_scorer.score_image(filepath)
                 
-                # Get aesthetic score from HuggingFace
-                aesthetic_data = aesthetic_scorer.score_image(filepath)
-                print(f"  Aesthetic: {aesthetic_data.get('aesthetic_score', 0):.2f} (via {aesthetic_data.get('ml_source', 'unknown')})")
+                # Check if HuggingFace gave us blur scores
+                if hf_result.get('ml_source') == 'huggingface' and 'blur_score' in hf_result:
+                    # Use HuggingFace for everything
+                    blur_score = hf_result.get('blur_score', 100)
+                    blur_category = hf_result.get('blur_category', 'unknown')
+                    aesthetic_score = hf_result.get('aesthetic_score', 5)
+                    aesthetic_rating = hf_result.get('aesthetic_rating', 'fair')
+                    composition_score = hf_result.get('composition_score', 5)
+                    recommendation = hf_result.get('recommendation', 'maybe')
+                    action = hf_result.get('action', '')
+                    
+                    print(f"  Using HF scores - Aesthetic: {aesthetic_score}, Blur: {blur_score}")
+                    
+                else:
+                    # Fallback: use local blur detection
+                    blur_score, blur_category = blur_detector.detect_blur_laplacian(filepath)
+                    aesthetic_score = hf_result.get('aesthetic_score', 5)
+                    aesthetic_rating = hf_result.get('aesthetic_rating', 'fair')
+                    composition_score = hf_result.get('composition_score', 5)
+                    
+                    # Calculate recommendation locally
+                    if blur_category == 'sharp' and aesthetic_score >= 7:
+                        recommendation = 'use'
+                        action = 'Ready to use'
+                    elif blur_category == 'slightly_blurry' and aesthetic_score >= 7:
+                        recommendation = 'enhance'
+                        action = 'Good photo - needs enhancement'
+                    elif aesthetic_score >= 8:
+                        recommendation = 'enhance'
+                        action = 'Great aesthetics but blurry'
+                    else:
+                        recommendation = 'maybe'
+                        action = 'Average quality'
+                    
+                    print(f"  Using mixed scores - Aesthetic: {aesthetic_score}, Blur: {blur_score}")
                 
                 # Calculate combined score
                 blur_normalized = min(blur_score / 100, 10) if blur_score > 0 else 0
-                aesthetic = aesthetic_data.get('aesthetic_score', 5)
-                combined = (blur_normalized * 0.4) + (aesthetic * 0.6)
-                
-                # Determine recommendation
-                if blur_category == 'sharp' and aesthetic >= 7:
-                    recommendation = 'use'
-                    action = 'Ready to use - high quality'
-                elif blur_category == 'slightly_blurry' and aesthetic >= 7:
-                    recommendation = 'enhance'
-                    action = 'Good photo - enhance for sharpness'
-                elif blur_category == 'sharp' and aesthetic >= 5:
-                    recommendation = 'maybe'
-                    action = 'Sharp but average aesthetics'
-                elif aesthetic >= 8:
-                    recommendation = 'enhance'
-                    action = 'Great aesthetics but needs sharpening'
-                else:
-                    recommendation = 'skip'
-                    action = 'Below quality threshold'
+                combined = (blur_normalized * 0.4) + (aesthetic_score * 0.6)
                 
                 results[filepath] = {
                     'filename': filename,
                     'blur_score': blur_score,
                     'blur_category': blur_category,
-                    'aesthetic_score': aesthetic_data.get('aesthetic_score', 5),
-                    'aesthetic_rating': aesthetic_data.get('aesthetic_rating', 'unknown'),
-                    'composition_score': aesthetic_data.get('composition_score', 5),
+                    'aesthetic_score': aesthetic_score,
+                    'aesthetic_rating': aesthetic_rating,
+                    'composition_score': composition_score,
                     'combined_score': round(combined, 2),
                     'recommendation': recommendation,
                     'action': action,
-                    'ml_source': aesthetic_data.get('ml_source', 'unknown')
+                    'ml_source': hf_result.get('ml_source', 'unknown')
                 }
                 
             except Exception as e:
@@ -264,13 +270,6 @@ def analyze_photos_background(job_id, folder_path):
             json.dump(results, f, indent=2)
         
         print(f"\nJob {job_id} completed!")
-        print(f"Results summary:")
-        ml_sources = {}
-        for r in results.values():
-            source = r.get('ml_source', 'unknown')
-            ml_sources[source] = ml_sources.get(source, 0) + 1
-        for source, count in ml_sources.items():
-            print(f"  {source}: {count} images")
         
     except Exception as e:
         print(f"Fatal error in job {job_id}: {e}")

@@ -49,73 +49,45 @@ class AestheticScorer:
         """Score a single image using HuggingFace ML API"""
         
         if self.client:
-            # Use Gradio Client
             try:
+                print(f"Calling HuggingFace for {Path(image_path).name}")
+                
+                # Call HuggingFace Space
                 result = self.client.predict(
-                    image_path,  # filepath
-                    True,  # enhance_option
+                    image_path,
+                    True,
                     api_name="/predict"
                 )
                 
-                # Parse the result
-                if isinstance(result, str):
-                    result = json.loads(result)
-                
-                if result.get('status') == 'success':
+                # The result is already a dict with the structure you showed!
+                # No need to parse JSON string
+                if isinstance(result, dict) and result.get('status') == 'success':
                     scores = result.get('scores', {})
                     analysis = result.get('analysis', {})
                     
+                    aesthetic_score = scores.get('aesthetic_score', 5.0)
+                    blur_score = scores.get('blur_score', 100)
+                    composition_score = scores.get('composition_score', 5.0)
+                    
+                    print(f"HF Scores - Aesthetic: {aesthetic_score}, Blur: {blur_score}, Composition: {composition_score}")
+                    
                     return {
-                        'aesthetic_score': scores.get('aesthetic_score', 5.0),
+                        'aesthetic_score': aesthetic_score,
                         'aesthetic_rating': analysis.get('aesthetic_rating', 'unknown'),
-                        'composition_score': scores.get('composition_score', 5.0),
-                        'ml_source': 'huggingface_clip'
+                        'blur_score': blur_score,
+                        'blur_category': analysis.get('blur_category', 'unknown'),
+                        'composition_score': composition_score,
+                        'recommendation': analysis.get('recommendation', 'maybe'),
+                        'action': analysis.get('action', ''),
+                        'ml_source': 'huggingface'
                     }
-                    
-            except Exception as e:
-                print(f"Error calling HuggingFace via client: {e}")
-        
-        # Alternative: Direct HTTP API call
-        if self.ml_available:
-            try:
-                # Open and prepare image
-                with open(image_path, 'rb') as f:
-                    files = {'file': f}
-                    
-                    # Call the HuggingFace Space API endpoint
-                    response = requests.post(
-                        f"{self.hf_space_url}/run/predict",
-                        files=files,
-                        json={"data": [None, True]},  # image will be in files
-                        timeout=30
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        
-                        # Extract data from response
-                        if 'data' in result:
-                            data = result['data'][0] if isinstance(result['data'], list) else result['data']
-                            
-                            if isinstance(data, str):
-                                data = json.loads(data)
-                            
-                            if data.get('status') == 'success':
-                                scores = data.get('scores', {})
-                                analysis = data.get('analysis', {})
-                                
-                                return {
-                                    'aesthetic_score': scores.get('aesthetic_score', 5.0),
-                                    'aesthetic_rating': analysis.get('aesthetic_rating', 'unknown'),
-                                    'composition_score': scores.get('composition_score', 5.0),
-                                    'ml_source': 'huggingface_api'
-                                }
                 
             except Exception as e:
-                print(f"Error calling HuggingFace API: {e}")
+                print(f"Error calling HuggingFace: {e}")
         
-        # Fallback to local simple scoring
+        # Fallback
         return self._local_simple_score(image_path)
+
     
     def _local_simple_score(self, image_path: str) -> Dict:
         """Fallback scoring without ML"""
