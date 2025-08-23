@@ -230,7 +230,7 @@ def analyze_photos_background(job_id, folder_path):
                 
                 # Calculate combined score
                 blur_normalized = min(blur_score / 100, 10) if blur_score > 0 else 0
-                combined = (blur_normalized * 0.4) + (aesthetic_score * 0.6)
+                combined = (blur_normalized * 0.4) + (aesthetic_score * 0.3) + (composition_score * 0.3)
                 
                 results[filepath] = {
                     'filename': filename,
