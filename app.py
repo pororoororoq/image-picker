@@ -147,46 +147,137 @@ def upload_files():
     })
 
 def analyze_photos_background(job_id, folder_path):
-    """Run photo analysis in background"""
+    """Run photo analysis in background with HuggingFace"""
     job = processing_jobs.get(job_id)
     if not job:
+        print(f"Job {job_id} not found!")
         return
     
     try:
-        # Initialize analyzer with HuggingFace URL
+        print(f"Starting analysis for job {job_id}")
+        
+        # Import modules
         from blur_detector import BlurDetector
-        from aesthetic_scorer import AestheticScorer  # Use the API version
-        from photo_analyzer import PhotoAnalyzer
+        from aesthetic_scorer import AestheticScorer
+        import os
         
-        # Get HuggingFace Space URL from environment
+        # Get HuggingFace URL
         hf_url = os.getenv('HF_SPACE_URL', 'https://pororoororoq-yearbook-photo-analyzer.hf.space')
+        print(f"Using HuggingFace Space: {hf_url}")
         
-        analyzer = PhotoAnalyzer()
-        analyzer.aesthetic_scorer = AestheticScorer(hf_url)  # Override with API version
+        # Initialize scorers
+        blur_detector = BlurDetector()
+        aesthetic_scorer = AestheticScorer(hf_url)
         
-        # Custom progress callback
-        def progress_callback(current_file, processed_count):
-            job.current_file = current_file
-            job.processed_files = processed_count
+        # Check if HuggingFace is connected
+        print(f"HuggingFace ML available: {aesthetic_scorer.ml_available}")
+        print(f"Gradio client connected: {aesthetic_scorer.client is not None}")
         
-        # Analyze folder
-        results = analyzer.analyze_folder(folder_path)
+        # Get list of images
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
+        files = [f for f in os.listdir(folder_path) 
+                if os.path.splitext(f)[1].lower() in image_extensions]
+        
+        total_files = len(files)
+        print(f"Found {total_files} images to process")
+        
+        job.total_files = total_files
+        job.status = 'processing'
+        
+        results = {}
+        
+        # Process each file
+        for i, filename in enumerate(files):
+            filepath = os.path.join(folder_path, filename)
+            print(f"\nProcessing {i+1}/{total_files}: {filename}")
+            
+            # Update job progress
+            job.processed_files = i
+            job.current_file = filename
+            
+            try:
+                # Get blur score
+                blur_score, blur_category = blur_detector.detect_blur_laplacian(filepath)
+                print(f"  Blur: {blur_score:.2f} ({blur_category})")
+                
+                # Get aesthetic score from HuggingFace
+                aesthetic_data = aesthetic_scorer.score_image(filepath)
+                print(f"  Aesthetic: {aesthetic_data.get('aesthetic_score', 0):.2f} (via {aesthetic_data.get('ml_source', 'unknown')})")
+                
+                # Calculate combined score
+                blur_normalized = min(blur_score / 100, 10) if blur_score > 0 else 0
+                aesthetic = aesthetic_data.get('aesthetic_score', 5)
+                combined = (blur_normalized * 0.4) + (aesthetic * 0.6)
+                
+                # Determine recommendation
+                if blur_category == 'sharp' and aesthetic >= 7:
+                    recommendation = 'use'
+                    action = 'Ready to use - high quality'
+                elif blur_category == 'slightly_blurry' and aesthetic >= 7:
+                    recommendation = 'enhance'
+                    action = 'Good photo - enhance for sharpness'
+                elif blur_category == 'sharp' and aesthetic >= 5:
+                    recommendation = 'maybe'
+                    action = 'Sharp but average aesthetics'
+                elif aesthetic >= 8:
+                    recommendation = 'enhance'
+                    action = 'Great aesthetics but needs sharpening'
+                else:
+                    recommendation = 'skip'
+                    action = 'Below quality threshold'
+                
+                results[filepath] = {
+                    'filename': filename,
+                    'blur_score': blur_score,
+                    'blur_category': blur_category,
+                    'aesthetic_score': aesthetic_data.get('aesthetic_score', 5),
+                    'aesthetic_rating': aesthetic_data.get('aesthetic_rating', 'unknown'),
+                    'composition_score': aesthetic_data.get('composition_score', 5),
+                    'combined_score': round(combined, 2),
+                    'recommendation': recommendation,
+                    'action': action,
+                    'ml_source': aesthetic_data.get('ml_source', 'unknown')
+                }
+                
+            except Exception as e:
+                print(f"  Error: {e}")
+                results[filepath] = {
+                    'filename': filename,
+                    'blur_score': -1,
+                    'blur_category': 'error',
+                    'aesthetic_score': 5,
+                    'aesthetic_rating': 'error',
+                    'combined_score': 0,
+                    'recommendation': 'skip',
+                    'action': f'Error: {str(e)}',
+                    'ml_source': 'error'
+                }
+        
+        # Update final progress
+        job.processed_files = total_files
+        job.results = results
+        job.status = 'completed'
         
         # Save results
         results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{job_id}.json")
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
         
-        # Generate report
-        analyzer.generate_report(app.config['RESULTS_FOLDER'])
-        
-        job.results = results
-        job.status = 'completed'
+        print(f"\nJob {job_id} completed!")
+        print(f"Results summary:")
+        ml_sources = {}
+        for r in results.values():
+            source = r.get('ml_source', 'unknown')
+            ml_sources[source] = ml_sources.get(source, 0) + 1
+        for source, count in ml_sources.items():
+            print(f"  {source}: {count} images")
         
     except Exception as e:
+        print(f"Fatal error in job {job_id}: {e}")
+        import traceback
+        traceback.print_exc()
         job.status = 'error'
         job.error = str(e)
-        print(f"Error in job {job_id}: {e}")
 
 @app.route('/status/<job_id>')
 def get_job_status(job_id):
