@@ -306,7 +306,6 @@ def get_results(job_id):
     # Process results for frontend
     processed_results = []
     for filepath, data in job.results.items():
-        # Create relative path for image serving
         filename = os.path.basename(filepath)
         
         processed_results.append({
@@ -316,6 +315,7 @@ def get_results(job_id):
             'blur_category': data.get('blur_category', 'unknown'),
             'aesthetic_score': data.get('aesthetic_score', 0),
             'aesthetic_rating': data.get('aesthetic_rating', 'unknown'),
+            'composition_score': data.get('composition_score', 5),  # Add this line
             'combined_score': data.get('combined_score', 0),
             'recommendation': data.get('recommendation', 'unknown'),
             'action': data.get('action', ''),

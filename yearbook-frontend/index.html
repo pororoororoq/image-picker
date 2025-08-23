@@ -264,14 +264,17 @@
         .photo-scores {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 10px;
-            font-size: 14px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            gap: 5px;
         }
 
         .score-badge {
-            padding: 4px 8px;
+            padding: 3px 6px;
             border-radius: 4px;
-            font-size: 12px;
+            font-size: 11px;
+            background: #f0f0f0;
+            font-weight: 600;
         }
 
         .recommendation {
@@ -440,7 +443,7 @@
 
     <script>
         // HARDCODE YOUR BACKEND URL HERE
-        let API_URL = 'https://image-picker-e69o.onrender.com';  // ← PUT YOUR RENDER URL HERE
+        let API_URL = 'https://yearbook-photo-selector.onrender.com';  // ← PUT YOUR RENDER URL HERE
         let currentJobId = null;
         let currentResults = [];
         let selectedPhotos = new Set();
@@ -677,10 +680,14 @@
                             <span>Aesthetic: <span class="score-badge">${photo.aesthetic_score.toFixed(1)}/10</span></span>
                         </div>
                         <div class="photo-scores">
+                            <span>Composition: <span class="score-badge">${(photo.composition_score || 5).toFixed(1)}/10</span></span>
                             <span>Combined: <strong>${photo.combined_score.toFixed(1)}/10</strong></span>
                         </div>
                         <div class="recommendation rec-${photo.recommendation}">
                             ${photo.recommendation}
+                        </div>
+                        <div style="font-size: 11px; color: #666; margin-top: 5px; text-align: center;">
+                            ${photo.action || ''}
                         </div>
                     </div>
                 `;
