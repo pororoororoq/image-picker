@@ -20,13 +20,12 @@ app = Flask(__name__)
 app.secret_key = 'your-secret-key-here-change-in-production'
 
 # Configure CORS to allow requests from Netlify
-CORS(app, resources={
-    r"/*": {
-        "origins": ["http://localhost:*", "https://*.netlify.app", "https://your-custom-domain.com"],
-        "methods": ["GET", "POST", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type"]
-    }
-})
+CORS(app, 
+     origins="*",
+     allow_headers="*",
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     supports_credentials=False,
+     resources={r"/*": {"origins": "*"}})
 
 # Configuration
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max upload
@@ -67,6 +66,22 @@ class AnalysisJob:
             'current_file': self.current_file,
             'error': self.error
         }
+
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = jsonify({'status': 'ok'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "*")
+        response.headers.add('Access-Control-Allow-Methods', "*")
+        return response
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
 
 @app.route('/')
 def index():
