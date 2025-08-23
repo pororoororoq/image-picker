@@ -159,7 +159,7 @@ def analyze_photos_background(job_id, folder_path):
         from photo_analyzer import PhotoAnalyzer
         
         # Get HuggingFace Space URL from environment
-        hf_url = os.getenv('HF_SPACE_URL', 'https://your-username-yearbook-photo-analyzer.hf.space')
+        hf_url = os.getenv('HF_SPACE_URL', 'https://pororoororoq-yearbook-photo-analyzer.hf.space')
         
         analyzer = PhotoAnalyzer()
         analyzer.aesthetic_scorer = AestheticScorer(hf_url)  # Override with API version
