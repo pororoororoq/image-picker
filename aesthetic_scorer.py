@@ -24,13 +24,17 @@ class AestheticScorer:
         
         # For Gradio Client API
         from gradio_client import Client
+        self.client = None
         try:
+            from gradio_client import Client
             self.client = Client(self.hf_space_url)
             self.ml_available = True
-            print(f"Connected to HuggingFace Space: {self.hf_space_url}")
-        except:
-            # Fallback to direct API
-            self.client = None
+            print(f"Connected to HuggingFace Space via Gradio Client: {self.hf_space_url}")
+        except ImportError:
+            print("gradio_client not installed, using HTTP API")
+            self.ml_available = self._test_connection()
+        except Exception as e:
+            print(f"Could not connect via Gradio Client: {e}")
             self.ml_available = self._test_connection()
     
     def _test_connection(self):
