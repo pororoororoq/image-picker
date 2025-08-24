@@ -11,7 +11,6 @@ import numpy as np
 from io import BytesIO
 import os
 import time
-from gradio_client import file
 
 class AestheticScorer:
     """Score images using HuggingFace Space API for ML processing"""
