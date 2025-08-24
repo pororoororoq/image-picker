@@ -48,44 +48,65 @@ class AestheticScorer:
     def score_image(self, image_path: str) -> Dict:
         """Score a single image using HuggingFace ML API"""
         
-        if self.client:
-            try:
-                print(f"Calling HuggingFace for {Path(image_path).name}")
+        # Skip Gradio Client for now, use direct HTTP
+        try:
+            # Read the image
+            from PIL import Image
+            image = Image.open(image_path)
+            
+            # Convert to base64
+            import base64
+            from io import BytesIO
+            
+            buffered = BytesIO()
+            image.save(buffered, format="PNG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+            
+            # Call HuggingFace directly via HTTP
+            import requests
+            
+            response = requests.post(
+                f"{self.hf_space_url}/run/predict",
+                json={
+                    "data": [
+                        f"data:image/png;base64,{img_base64}",
+                        True
+                    ]
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
                 
-                # Call HuggingFace Space
-                result = self.client.predict(
-                    image_path,
-                    True,
-                    api_name="/predict"
-                )
-                
-                # The result is already a dict with the structure you showed!
-                # No need to parse JSON string
-                if isinstance(result, dict) and result.get('status') == 'success':
-                    scores = result.get('scores', {})
-                    analysis = result.get('analysis', {})
+                # The response should have 'data' key
+                if 'data' in result and len(result['data']) > 0:
+                    data = result['data'][0]
                     
-                    aesthetic_score = scores.get('aesthetic_score', 5.0)
-                    blur_score = scores.get('blur_score', 100)
-                    composition_score = scores.get('composition_score', 5.0)
+                    # Parse the JSON response
+                    if isinstance(data, str):
+                        data = json.loads(data)
                     
-                    print(f"HF Scores - Aesthetic: {aesthetic_score}, Blur: {blur_score}, Composition: {composition_score}")
-                    
-                    return {
-                        'aesthetic_score': aesthetic_score,
-                        'aesthetic_rating': analysis.get('aesthetic_rating', 'unknown'),
-                        'blur_score': blur_score,
-                        'blur_category': analysis.get('blur_category', 'unknown'),
-                        'composition_score': composition_score,
-                        'recommendation': analysis.get('recommendation', 'maybe'),
-                        'action': analysis.get('action', ''),
-                        'ml_source': 'huggingface'
-                    }
-                
-            except Exception as e:
-                print(f"Error calling HuggingFace: {e}")
+                    if data.get('status') == 'success':
+                        scores = data.get('scores', {})
+                        analysis = data.get('analysis', {})
+                        
+                        return {
+                            'aesthetic_score': scores.get('aesthetic_score', 5.0),
+                            'blur_score': scores.get('blur_score', 100),
+                            'blur_category': analysis.get('blur_category', 'unknown'),
+                            'composition_score': scores.get('composition_score', 5.0),
+                            'combined_score': scores.get('combined_score', 5.0),
+                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                            'recommendation': analysis.get('recommendation', 'maybe'),
+                            'action': analysis.get('action', ''),
+                            'ml_source': 'huggingface_http'
+                        }
+            
+        except Exception as e:
+            print(f"Error calling HuggingFace: {e}")
         
-        # Fallback
         return self._local_simple_score(image_path)
 
     

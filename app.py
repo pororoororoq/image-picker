@@ -191,7 +191,7 @@ def analyze_photos_background(job_id, folder_path):
             try:
                 # Get ALL scores from HuggingFace (including blur!)
                 hf_result = aesthetic_scorer.score_image(filepath)
-                
+                print(hf_result)
                 # Check if HuggingFace gave us blur scores
                 if hf_result.get('ml_source') == 'huggingface' and 'blur_score' in hf_result:
                     # Use HuggingFace for everything
