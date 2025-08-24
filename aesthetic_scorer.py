@@ -19,7 +19,7 @@ class AestheticScorer:
         # Get HuggingFace Space URL from environment or parameter
         self.hf_space_url = hf_space_url or os.getenv(
             'HF_SPACE_URL', 
-            'https://pororoororoq-yearbook-photo-analyzer.hf.space'  # ← UPDATE THIS
+            'https://pororoororoq-photo-analyzer.hf.space'  # ← UPDATE THIS
         )
         
         # For Gradio Client API
