@@ -182,7 +182,8 @@ def analyze_photos_background(job_id, folder_path):
         # Process each file
         for i, filename in enumerate(files):
             filepath = os.path.join(folder_path, filename)
-            print(f"\nProcessing {i+1}/{total_files}: {filename}")
+            print(f"\n{'='*60}")
+            print(f"Processing {i+1}/{total_files}: {filename}")
             
             # Update job progress
             job.processed_files = i
@@ -191,7 +192,14 @@ def analyze_photos_background(job_id, folder_path):
             try:
                 # Get ALL scores from HuggingFace (including blur!)
                 hf_result = aesthetic_scorer.score_image(filepath)
-                print(hf_result)
+                
+                # DEBUG: Print the full HuggingFace result
+                print(f"Full HF Result: {json.dumps(hf_result, indent=2)}")
+                
+                # Check what we actually got
+                print(f"Composition Score: {hf_result.get('composition_score', 'NOT FOUND')}")
+                print(f"ML Source: {hf_result.get('ml_source', 'NOT FOUND')}")
+                
                 # Check if HuggingFace gave us blur scores
                 if hf_result.get('ml_source') == 'huggingface' and 'blur_score' in hf_result:
                     # Use HuggingFace for everything
@@ -203,14 +211,23 @@ def analyze_photos_background(job_id, folder_path):
                     recommendation = hf_result.get('recommendation', 'maybe')
                     action = hf_result.get('action', '')
                     
-                    print(f"  Using HF scores - Aesthetic: {aesthetic_score}, Blur: {blur_score}")
+                    print(f"✓ Using HF scores:")
+                    print(f"  - Aesthetic: {aesthetic_score}")
+                    print(f"  - Blur: {blur_score}")
+                    print(f"  - Composition: {composition_score} <-- CHECK THIS VALUE")
                     
                 else:
                     # Fallback: use local blur detection
+                    print("✗ Using fallback (HF failed or incomplete)")
                     blur_score, blur_category = blur_detector.detect_blur_laplacian(filepath)
                     aesthetic_score = hf_result.get('aesthetic_score', 5)
                     aesthetic_rating = hf_result.get('aesthetic_rating', 'fair')
                     composition_score = hf_result.get('composition_score', 5)
+                    
+                    print(f"Fallback scores:")
+                    print(f"  - Aesthetic: {aesthetic_score}")
+                    print(f"  - Blur: {blur_score}")
+                    print(f"  - Composition: {composition_score} <-- THIS IS PROBABLY 5")
                     
                     # Calculate recommendation locally
                     if blur_category == 'sharp' and aesthetic_score >= 7:
@@ -225,12 +242,16 @@ def analyze_photos_background(job_id, folder_path):
                     else:
                         recommendation = 'maybe'
                         action = 'Average quality'
-                    
-                    print(f"  Using mixed scores - Aesthetic: {aesthetic_score}, Blur: {blur_score}")
                 
                 # Calculate combined score
                 blur_normalized = min(blur_score / 100, 10) if blur_score > 0 else 0
                 combined = (blur_normalized * 0.4) + (aesthetic_score * 0.3) + (composition_score * 0.3)
+                
+                print(f"Combined Score Calculation:")
+                print(f"  blur_normalized ({blur_normalized}) * 0.4 = {blur_normalized * 0.4}")
+                print(f"  aesthetic ({aesthetic_score}) * 0.3 = {aesthetic_score * 0.3}")
+                print(f"  composition ({composition_score}) * 0.3 = {composition_score * 0.3}")
+                print(f"  TOTAL = {combined}")
                 
                 results[filepath] = {
                     'filename': filename,
@@ -239,7 +260,7 @@ def analyze_photos_background(job_id, folder_path):
                     'aesthetic_score': aesthetic_score,
                     'aesthetic_rating': aesthetic_rating,
                     'composition_score': composition_score,
-                    'combined_score': round(combined, 2),
+                    'combined_score': 10, #round(combined, 2),
                     'recommendation': recommendation,
                     'action': action,
                     'ml_source': hf_result.get('ml_source', 'unknown')
@@ -247,12 +268,15 @@ def analyze_photos_background(job_id, folder_path):
                 
             except Exception as e:
                 print(f"  Error: {e}")
+                import traceback
+                traceback.print_exc()
                 results[filepath] = {
                     'filename': filename,
                     'blur_score': -1,
                     'blur_category': 'error',
                     'aesthetic_score': 5,
                     'aesthetic_rating': 'error',
+                    'composition_score': 5,  # Added this
                     'combined_score': 0,
                     'recommendation': 'skip',
                     'action': f'Error: {str(e)}',
@@ -269,7 +293,9 @@ def analyze_photos_background(job_id, folder_path):
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
         
-        print(f"\nJob {job_id} completed!")
+        print(f"\n{'='*60}")
+        print(f"Job {job_id} completed!")
+        print(f"Check the results file at: {results_file}")
         
     except Exception as e:
         print(f"Fatal error in job {job_id}: {e}")
