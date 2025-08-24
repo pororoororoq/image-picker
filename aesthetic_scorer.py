@@ -49,53 +49,14 @@ class AestheticScorer:
     def score_image(self, image_path: str) -> Dict:
         """Score a single image using HuggingFace ML API"""
         
-        # Method 1: Try Gradio Client first (faster and more reliable when it works)
-        if self.client:
-            try:
-                from gradio_client import file
-                
-                print(f"Calling HuggingFace via Gradio Client for {Path(image_path).name}")
-                
-                # Use file() wrapper for gradio_client
-                result = self.client.predict(
-                    file(image_path),  # ← IMPORTANT: Use file() wrapper
-                    True,
-                    api_name="/predict"
-                )
-                
-                print(f"Gradio Client result type: {type(result)}")
-                
-                # Parse the result - it should already be a dict
-                if isinstance(result, dict) and result.get('status') == 'success':
-                    scores = result.get('scores', {})
-                    analysis = result.get('analysis', {})
-                    
-                    print(f"✓ Got scores via Gradio Client - Aesthetic: {scores.get('aesthetic_score')}, Composition: {scores.get('composition_score')}")
-                    
-                    return {
-                        'aesthetic_score': scores.get('aesthetic_score', 5.0),
-                        'blur_score': scores.get('blur_score', 100),
-                        'blur_category': analysis.get('blur_category', 'unknown'),
-                        'composition_score': scores.get('composition_score', 5.0),
-                        'combined_score': scores.get('combined_score', 5.0),
-                        'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                        'recommendation': analysis.get('recommendation', 'maybe'),
-                        'action': analysis.get('action', ''),
-                        'ml_source': 'huggingface_gradio'
-                    }
-                    
-            except Exception as e:
-                print(f"Gradio Client failed: {e}, trying HTTP method...")
-        
-        # Method 2: HTTP API as fallback
+        # Just use HTTP API directly (skip Gradio Client)
         try:
-            print(f"Trying HTTP API for {Path(image_path).name}")
+            print(f"Calling HuggingFace via HTTP for {Path(image_path).name}")
             
-            # Read the image
+            # Your existing HTTP code...
             from PIL import Image
             image = Image.open(image_path)
             
-            # Convert to base64
             import base64
             from io import BytesIO
             
@@ -103,7 +64,6 @@ class AestheticScorer:
             image.save(buffered, format="PNG")
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
             
-            # Call HuggingFace directly via HTTP
             import requests
             
             response = requests.post(
@@ -122,20 +82,21 @@ class AestheticScorer:
             
             if response.status_code == 200:
                 result = response.json()
+                print(f"HTTP response keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
                 
-                # The response should have 'data' key
                 if 'data' in result and len(result['data']) > 0:
                     data = result['data'][0]
                     
-                    # Parse the JSON response
                     if isinstance(data, str):
                         data = json.loads(data)
+                    
+                    print(f"Parsed data keys: {data.keys() if isinstance(data, dict) else 'not a dict'}")
                     
                     if data.get('status') == 'success':
                         scores = data.get('scores', {})
                         analysis = data.get('analysis', {})
                         
-                        print(f"✓ Got scores via HTTP - Aesthetic: {scores.get('aesthetic_score')}, Composition: {scores.get('composition_score')}")
+                        print(f"✓ Aesthetic: {scores.get('aesthetic_score')}, Composition: {scores.get('composition_score')}")
                         
                         return {
                             'aesthetic_score': scores.get('aesthetic_score', 5.0),
@@ -148,12 +109,18 @@ class AestheticScorer:
                             'action': analysis.get('action', ''),
                             'ml_source': 'huggingface_http'
                         }
-            
+                else:
+                    print(f"Unexpected response structure: {result}")
+            else:
+                print(f"HTTP request failed with status {response.status_code}")
+                
         except Exception as e:
-            print(f"HTTP API also failed: {e}")
+            print(f"HTTP API failed: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # Method 3: Local fallback
-        print(f"Both HuggingFace methods failed, using local fallback for {Path(image_path).name}")
+        # Fallback
+        print(f"Using local fallback for {Path(image_path).name}")
         return self._local_simple_score(image_path)
 
     
