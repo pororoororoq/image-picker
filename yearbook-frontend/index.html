@@ -276,6 +276,10 @@
             background: #f0f0f0;
             font-weight: 600;
         }
+        
+        .blur-excellent { background: #c6f6d5; color: #22543d; }
+        .blur-good { background: #feebc8; color: #7c2d12; }
+        .blur-poor { background: #fed7d7; color: #742a2a; }
 
         .recommendation {
             padding: 8px;
@@ -341,13 +345,26 @@
             margin: 20px 0;
             display: none;
         }
+        
+        .ml-source-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            margin-left: 5px;
+            background: #e2e8f0;
+            color: #4a5568;
+        }
+        
+        .ml-hf { background: #9f7aea; color: white; }
+        .ml-local { background: #f6ad55; color: white; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>📸 Yearbook Photo Selector</h1>
-            <p>AI-powered photo analysis for perfect yearbook selections</p>
+            <p>AI-powered photo analysis with face-focused blur detection</p>
         </div>
 
         <!-- Configuration Section - Hidden by default since URL is hardcoded -->
@@ -451,24 +468,9 @@
 
         // Check for API URL on load
         window.addEventListener('DOMContentLoaded', () => {
-            // Skip config and connect directly
             console.log('Connecting to backend:', API_URL);
             checkBackendConnection();
         });
-
-        // Save API URL
-        function saveApiUrl() {
-            const url = document.getElementById('apiUrl').value.trim();
-            if (!url) {
-                showError('Please enter a valid API URL');
-                return;
-            }
-            
-            // Remove trailing slash if present
-            API_URL = url.replace(/\/$/, '');
-            localStorage.setItem('yearbook_api_url', API_URL);
-            checkBackendConnection();
-        }
 
         // Check backend connection
         async function checkBackendConnection() {
@@ -495,7 +497,6 @@
             } catch (error) {
                 console.error('Connection error:', error);
                 showError(`Cannot connect to backend. Error: ${error.message}`);
-                // Show upload section anyway for debugging
                 document.getElementById('uploadSection').style.display = 'block';
             }
         }
@@ -659,6 +660,13 @@
             }
         }
 
+        // Helper function to get blur score color class
+        function getBlurScoreClass(score) {
+            if (score >= 150) return 'blur-excellent';
+            if (score >= 50) return 'blur-good';
+            return 'blur-poor';
+        }
+
         // Display photos in grid
         function displayPhotos() {
             const grid = document.getElementById('photoGrid');
@@ -669,6 +677,13 @@
                 : currentResults.filter(p => p.recommendation === currentFilter);
 
             filtered.forEach(photo => {
+                // Get ML source badge
+                const mlSourceBadge = photo.ml_source === 'huggingface' 
+                    ? '<span class="ml-source-badge ml-hf">HF</span>'
+                    : photo.ml_source === 'local_fallback' || photo.ml_source === 'local_enhanced'
+                    ? '<span class="ml-source-badge ml-local">Local</span>'
+                    : '';
+
                 const card = document.createElement('div');
                 card.className = `photo-card ${selectedPhotos.has(photo.filename) ? 'selected' : ''}`;
                 card.innerHTML = `
@@ -676,12 +691,12 @@
                     <div class="photo-info">
                         <div class="photo-filename" title="${photo.filename}">${photo.filename}</div>
                         <div class="photo-scores">
-                            <span>Blur: <span class="score-badge">${photo.blur_category}</span></span>
+                            <span>Blur: <span class="score-badge ${getBlurScoreClass(photo.blur_score)}">${photo.blur_score.toFixed(0)}</span></span>
                             <span>Aesthetic: <span class="score-badge">${photo.aesthetic_score.toFixed(1)}/10</span></span>
                         </div>
                         <div class="photo-scores">
-                            <span>Composition: <span class="score-badge">${(photo.composition_score || 5).toFixed(1)}/10</span></span>
-                            <span>Combined: <strong>${photo.combined_score.toFixed(1)}/10</strong></span>
+                            <span>Comp: <span class="score-badge">${(photo.composition_score || 5).toFixed(1)}/10</span></span>
+                            <span>Overall: <strong>${photo.combined_score.toFixed(1)}/10</strong>${mlSourceBadge}</span>
                         </div>
                         <div class="recommendation rec-${photo.recommendation}">
                             ${photo.recommendation}
