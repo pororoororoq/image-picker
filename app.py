@@ -274,47 +274,44 @@ def analyze_with_gradio_client(filepath):
         
         print(f"  Response type: {type(result)}")
         
-        # Parse the result
-        if isinstance(result, str):
-            # If result is a JSON string, parse it
-            data = json.loads(result)
-        elif isinstance(result, dict):
-            data = result
-        else:
-            print(f"  Unexpected result type: {type(result)}")
-            return simple_fallback_analysis(filepath)
-        
-        # Extract scores from the response
-        if isinstance(data, dict) and data.get('status') == 'success':
-            scores = data.get('scores', {})
-            analysis = data.get('analysis', {})
+        # The result is ALREADY a dictionary from your HuggingFace Space
+        # No need to parse JSON - it comes back as a proper dict
+        if isinstance(result, dict) and result.get('status') == 'success':
+            scores = result.get('scores', {})
+            analysis = result.get('analysis', {})
+            
+            # Extract all the scores
+            aesthetic = float(scores.get('aesthetic_score', 5.0))
+            blur = float(scores.get('blur_score', 100))
+            composition = float(scores.get('composition_score', 5.0))
+            combined = float(scores.get('combined_score', 5.0))
+            
+            print(f"  ✓ Got HF scores - A:{aesthetic:.1f}, B:{blur:.0f}, C:{composition:.1f}")
             
             return {
-                'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
-                'blur_score': float(scores.get('blur_score', 100)),
+                'aesthetic_score': aesthetic,
+                'blur_score': blur,
                 'blur_category': analysis.get('blur_category', 'unknown'),
-                'composition_score': float(scores.get('composition_score', 5.0)),
-                'combined_score': float(scores.get('combined_score', 5.0)),
+                'composition_score': composition,
+                'combined_score': combined,
                 'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
                 'recommendation': analysis.get('recommendation', 'maybe'),
                 'action': analysis.get('action', ''),
-                'ml_source': 'huggingface_gradio',
+                'ml_source': 'huggingface',
                 'face_detected': analysis.get('face_detected', False)
             }
         else:
-            print(f"  Invalid response structure")
+            print(f"  Response status not 'success' or invalid structure")
+            print(f"  Response: {json.dumps(result, indent=2) if isinstance(result, dict) else result}")
             return simple_fallback_analysis(filepath)
             
     except Exception as e:
         print(f"  Gradio Client error: {e}")
+        import traceback
+        traceback.print_exc()
         
-        # Try to reconnect once
-        try:
-            print("  Attempting to reconnect...")
-            gradio_client = Client("pororoororoq/photo-analyzer")
-            return analyze_with_gradio_client(filepath)  # Retry once
-        except:
-            return simple_fallback_analysis(filepath)
+        # Don't retry - just use fallback
+        return simple_fallback_analysis(filepath)
 
 def simple_fallback_analysis(filepath):
     """Simple image analysis without ML libraries"""
