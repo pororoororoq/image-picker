@@ -1,4 +1,4 @@
-
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import os
@@ -16,40 +16,9 @@ from PIL import Image
 from io import BytesIO
 import random
 import traceback
-from flask import Flask, request, jsonify, send_file
-
-def call_huggingface_direct(image_path):
-    """Call HuggingFace Space directly (fallback)"""
-    try:
-        # Load and prepare image
-        with Image.open(image_path) as img:
-            img = img.convert('RGB')
-            
-            # Resize if too large
-            max_size = 1024
-            if img.width > max_size or img.height > max_size:
-                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-            
-            # Convert to base64
-            buffered = BytesIO()
-            img.save(buffered, format="PNG", optimize=True)
-            img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
-        # Direct HuggingFace API callfrom flask import Flask, request, jsonify, send_file
-    except Exception as e:  
-            print(f"  Error calling HuggingFace direct: {e}")
-            import traceback
-            traceback.print_exc()
-            return None 
-# Bridge server URL (Vercel deployment)
-BRIDGE_URL = os.getenv('BRIDGE_URL', 'https://yearbook-bridge.vercel.app')
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
-
-print(f"=== STARTUP CONFIG ===")
-print(f"Bridge URL: {BRIDGE_URL}")
-print(f"======================")
 
 # Configure CORS
 CORS(app, 
@@ -74,8 +43,8 @@ for folder in [app.config['UPLOAD_FOLDER'], app.config['RESULTS_FOLDER']]:
 # Global processing queue
 processing_jobs = {}
 
-# HuggingFace Space URL
-HF_SPACE_URL = os.getenv('HF_SPACE_URL', 'https://pororoororoq-photo-analyzer.hf.space')
+# HuggingFace Space URL - CORRECT ENDPOINT!
+HF_SPACE_URL = 'https://pororoororoq-photo-analyzer.hf.space'
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -123,9 +92,8 @@ def index():
     return jsonify({
         'status': 'ok',
         'message': 'Yearbook Photo Analyzer API',
-        'version': '3.1.0',
-        'mode': 'HTTP Direct with Bridge',
-        'bridge_url': BRIDGE_URL,
+        'version': '4.0.0',
+        'mode': 'Direct HuggingFace Integration',
         'hf_space': HF_SPACE_URL,
         'endpoints': {
             'upload': '/upload',
@@ -188,8 +156,8 @@ def upload_files():
         'total_files': len(saved_files)
     })
 
-def call_bridge_server(image_path):
-    """Call Vercel bridge server for HuggingFace analysis"""
+def call_huggingface_api(image_path):
+    """Call HuggingFace Space API directly with CORRECT endpoint"""
     try:
         # Load and prepare image
         with Image.open(image_path) as img:
@@ -205,107 +173,10 @@ def call_bridge_server(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        # Call bridge server (with fallback URLs)
-        bridge_urls = [
-            f"{BRIDGE_URL}/api/analyze",
-            f"{BRIDGE_URL}/api/analyze.py",
-            f"{BRIDGE_URL}/api/analyze.ts"
-        ]
+        # CORRECT Gradio API endpoint structure!
+        api_url = f"{HF_SPACE_URL}/gradio_api/call/predict"
         
-        response = None
-        for api_url in bridge_urls:
-            try:
-                response = requests.post(
-                    api_url,
-                    json={
-                        "image": img_base64,
-                        "enhance": True
-                    },
-                    headers={"Content-Type": "application/json"},
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    break
-            except:
-                continue
-        
-        if response and response.status_code == 200:
-            result = response.json()
-            
-            print(f"  🔍 Bridge raw response type: {type(result)}")
-            if isinstance(result, dict):
-                print(f"  🔍 Bridge response keys: {list(result.keys())}")
-                if 'scores' in result:
-                    print(f"  🔍 Scores found: {result['scores']}")
-                if 'analysis' in result:
-                    print(f"  🔍 Analysis found: {result['analysis']}")
-            
-            return result
-        else:
-            print(f"  Bridge server returned {response.status_code if response else 'no response'}")
-            return None
-            
-    except requests.exceptions.Timeout:
-        print(f"  Bridge server timeout")
-        return None
-    except Exception as e:
-        print(f"  Error calling bridge server: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-        
-        print(f"  Bridge server status: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            
-            # Parse the response properly
-            if isinstance(result, dict):
-                # Check if it has the expected structure
-                if 'scores' in result or 'status' in result:
-                    return result
-                # Handle wrapped response
-                elif 'data' in result and isinstance(result['data'], list):
-                    if len(result['data']) > 0:
-                        return result['data'][0]
-                # Handle other formats
-                elif 'result' in result:
-                    return result['result']
-            
-            print(f"  Unexpected response format from bridge: {result}")
-            return result  # Return it anyway, will be parsed later
-        else:
-            print(f"  Bridge server returned {response.status_code}")
-            return None
-            
-    except requests.exceptions.Timeout:
-        print(f"  Bridge server timeout")
-        return None
-    except Exception as e:
-        print(f"  Error calling bridge server: {e}")
-        return None
-
-def call_huggingface_direct(image_path):
-    """Call HuggingFace Space directly (fallback)"""
-    try:
-        # Load and prepare image
-        with Image.open(image_path) as img:
-            img = img.convert('RGB')
-            
-            # Resize if too large
-            max_size = 1024
-            if img.width > max_size or img.height > max_size:
-                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-            
-            # Convert to base64
-            buffered = BytesIO()
-            img.save(buffered, format="PNG", optimize=True)
-            img_base64 = base64.b64encode(buffered.getvalue()).decode()
-        
-        # Direct HuggingFace API call
-        api_url = f"{HF_SPACE_URL}/run/predict"
-        
+        # Step 1: Submit the prediction request
         response = requests.post(
             api_url,
             json={
@@ -318,105 +189,61 @@ def call_huggingface_direct(image_path):
             timeout=30
         )
         
-        print(f"  HF Direct API status: {response.status_code}")
+        if response.status_code == 200:
+            submit_result = response.json()
+            event_id = submit_result.get('event_id')
+            
+            if event_id:
+                # Step 2: Get the result using the event_id
+                result_url = f"{HF_SPACE_URL}/gradio_api/call/predict/{event_id}"
+                
+                # Poll for result (Gradio async pattern)
+                for _ in range(10):  # Try up to 10 times
+                    import time
+                    time.sleep(1)  # Wait a bit for processing
+                    
+                    result_response = requests.get(result_url, timeout=30)
+                    if result_response.status_code == 200:
+                        result = result_response.json()
+                        
+                        # Parse the result
+                        if isinstance(result, dict):
+                            if 'data' in result:
+                                actual_result = result['data'][0] if result['data'] else {}
+                            else:
+                                actual_result = result
+                            
+                            print(f"  HF Result: {json.dumps(actual_result)[:200]}")
+                            return actual_result
+        
+        # Alternative: Try the old endpoint format as fallback
+        old_api_url = f"{HF_SPACE_URL}/run/predict"
+        response = requests.post(
+            old_api_url,
+            json={
+                "data": [
+                    f"data:image/png;base64,{img_base64}",
+                    True
+                ]
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
         
         if response.status_code == 200:
             result = response.json()
-            print(f"  HF Response type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-            
-            # Handle Gradio response format
             if isinstance(result, dict) and 'data' in result:
-                data = result.get('data', [])
-                if data and len(data) > 0:
-                    actual_data = data[0]
-                    print(f"  HF data[0] type: {type(actual_data)}")
-                    
-                    # If it's a string, try to parse it as JSON
-                    if isinstance(actual_data, str):
-                        try:
-                            parsed = json.loads(actual_data)
-                            print(f"  Parsed JSON from string response")
-                            return parsed
-                        except:
-                            print(f"  Could not parse string response as JSON")
-                            # Try to extract values from the string
-                            return parse_string_response(actual_data)
-                    
-                    return actual_data
+                return result['data'][0] if result['data'] else {}
+            return result
             
-            # Already in the right format
-            elif isinstance(result, dict) and ('scores' in result or 'aesthetic_score' in result):
-                return result
-            
-            print(f"  Unexpected HF response format")
-            return result  # Return anyway, let the caller handle it
-        
         return None
             
     except Exception as e:
-        print(f"  Error calling HuggingFace direct: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-def parse_string_response(response_str):
-    """Try to parse values from a string response"""
-    try:
-        # Initialize result
-        result = {
-            'scores': {},
-            'analysis': {}
-        }
-        
-        # Try to find numeric values in the string
-        import re
-        
-        # Look for aesthetic score
-        aesthetic_match = re.search(r'aesthetic[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
-        if aesthetic_match:
-            result['scores']['aesthetic_score'] = float(aesthetic_match.group(1))
-        
-        # Look for blur score
-        blur_match = re.search(r'blur[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
-        if blur_match:
-            result['scores']['blur_score'] = float(blur_match.group(1))
-        
-        # Look for composition score
-        comp_match = re.search(r'composition[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
-        if comp_match:
-            result['scores']['composition_score'] = float(comp_match.group(1))
-        
-        # Look for combined score
-        combined_match = re.search(r'combined[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
-        if combined_match:
-            result['scores']['combined_score'] = float(combined_match.group(1))
-        
-        # Look for blur category
-        if 'sharp' in response_str.lower():
-            result['analysis']['blur_category'] = 'sharp'
-        elif 'slightly_blurry' in response_str.lower() or 'slight' in response_str.lower():
-            result['analysis']['blur_category'] = 'slightly_blurry'
-        elif 'blurry' in response_str.lower():
-            result['analysis']['blur_category'] = 'blurry'
-        
-        # Look for recommendations
-        if 'use' in response_str.lower():
-            result['analysis']['recommendation'] = 'use'
-        elif 'enhance' in response_str.lower():
-            result['analysis']['recommendation'] = 'enhance'
-        elif 'skip' in response_str.lower():
-            result['analysis']['recommendation'] = 'skip'
-        else:
-            result['analysis']['recommendation'] = 'maybe'
-        
-        return result if result['scores'] else None
-        
-    except Exception as e:
-        print(f"  Error parsing string response: {e}")
+        print(f"  Error calling HuggingFace: {e}")
         return None
 
 def analyze_photos_background(job_id, folder_path):
-    """Analyze photos using bridge server or direct HuggingFace"""
+    """Analyze photos using direct HuggingFace API"""
     job = processing_jobs.get(job_id)
     if not job:
         return
@@ -424,25 +251,9 @@ def analyze_photos_background(job_id, folder_path):
     try:
         print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
-        print(f"Bridge Server: {BRIDGE_URL}")
         print(f"HuggingFace Space: {HF_SPACE_URL}")
+        print(f"Using endpoint: {HF_SPACE_URL}/gradio_api/call/predict")
         print(f"{'='*60}")
-        
-        # Test which services are available
-        bridge_available = True  # FORCE bridge to always be tried first!
-        hf_direct_available = False  # NEVER try direct HF from Render
-        
-        # Test bridge server (but don't block if it fails the health check)
-        try:
-            test_response = requests.get(f"{BRIDGE_URL}/api/health", timeout=5)
-            if test_response.status_code == 200:
-                print(f"✓ Bridge server health check passed at {BRIDGE_URL}")
-            else:
-                print(f"⚠ Bridge health check returned {test_response.status_code}, but will try anyway")
-        except Exception as e:
-            print(f"⚠ Bridge health check failed ({e}), but will try anyway")
-        
-        print(f"📡 Will use bridge server at: {BRIDGE_URL}/api/analyze")
         
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -465,135 +276,58 @@ def analyze_photos_background(job_id, folder_path):
             job.current_file = filename
             
             try:
-                score_data = None
+                # Call HuggingFace API
+                hf_result = call_huggingface_api(filepath)
                 
-                # Try bridge server first (THIS IS THE ONLY WAY THAT WORKS FROM RENDER!)
-                if bridge_available:
-                    print(f"  📡 Calling bridge server at {BRIDGE_URL}")
-                    bridge_result = call_bridge_server(filepath)
-                    if bridge_result:
-                        print(f"  🔍 Bridge result type: {type(bridge_result)}")
-                        if isinstance(bridge_result, dict):
-                            print(f"  🔍 Bridge result keys: {list(bridge_result.keys())[:10]}")  # First 10 keys
-                        
-                        # Extract scores and analysis from the result
-                        scores = {}
-                        analysis = {}
-                        
-                        # Handle different response structures
-                        if isinstance(bridge_result, dict):
-                            # Best case: Direct scores/analysis structure
-                            if 'scores' in bridge_result and isinstance(bridge_result['scores'], dict):
-                                scores = bridge_result['scores']
-                                print(f"  ✅ Found scores in 'scores' key: {scores}")
-                            
-                            if 'analysis' in bridge_result and isinstance(bridge_result['analysis'], dict):
-                                analysis = bridge_result['analysis']
-                                print(f"  ✅ Found analysis in 'analysis' key: {analysis}")
-                            
-                            # Fallback: Look for scores at root level
-                            if not scores:
-                                for key in ['aesthetic_score', 'blur_score', 'composition_score', 'combined_score']:
-                                    if key in bridge_result:
-                                        scores[key] = bridge_result[key]
-                                        print(f"  📍 Found {key} at root: {bridge_result[key]}")
-                            
-                            # Fallback: Look for analysis at root level
-                            if not analysis:
-                                for key in ['blur_category', 'aesthetic_rating', 'recommendation', 'action', 'face_detected']:
-                                    if key in bridge_result:
-                                        analysis[key] = bridge_result[key]
-                                        print(f"  📍 Found {key} at root: {bridge_result[key]}")
-                        
-                        # Debug: Print exactly what we extracted
-                        print(f"  🎯 Final extracted scores: {scores}")
-                        print(f"  🎯 Final extracted analysis: {analysis}")
-                        
-                        # Only use the result if we found actual numeric scores
-                        if scores and any(k in scores for k in ['aesthetic_score', 'blur_score', 'composition_score']):
-                            # CRITICAL: Use the ACTUAL values from HuggingFace, not defaults!
-                            score_data = {
-                                'aesthetic_score': float(scores['aesthetic_score']) if 'aesthetic_score' in scores else 5.0,
-                                'blur_score': float(scores['blur_score']) if 'blur_score' in scores else 100.0,
-                                'blur_category': analysis.get('blur_category', 'unknown'),
-                                'composition_score': float(scores['composition_score']) if 'composition_score' in scores else 5.0,
-                                'combined_score': float(scores['combined_score']) if 'combined_score' in scores else 5.0,
-                                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                                'recommendation': analysis.get('recommendation', 'maybe'),
-                                'action': analysis.get('action', ''),
-                                'ml_source': 'huggingface_via_bridge',
-                                'face_detected': analysis.get('face_detected', False)
+                if hf_result and isinstance(hf_result, dict):
+                    # Extract scores from HuggingFace response
+                    scores = hf_result.get('scores', {})
+                    analysis = hf_result.get('analysis', {})
+                    
+                    # Check if scores are at root level
+                    if not scores:
+                        if 'aesthetic_score' in hf_result:
+                            scores = {
+                                'aesthetic_score': hf_result.get('aesthetic_score', 5.0),
+                                'blur_score': hf_result.get('blur_score', 100),
+                                'composition_score': hf_result.get('composition_score', 5.0),
+                                'combined_score': hf_result.get('combined_score', 5.0)
                             }
-                            
-                            print(f"  ✅✅✅ USING HUGGINGFACE SCORES:")
-                            print(f"       Aesthetic: {score_data['aesthetic_score']:.1f}")
-                            print(f"       Blur: {score_data['blur_score']:.0f} (THIS SHOULD NOT BE 200!)")
-                            print(f"       Composition: {score_data['composition_score']:.1f}")
-                            print(f"       Category: {score_data['blur_category']}")
-                        else:
-                            print(f"  ❌❌❌ NO VALID SCORES FOUND - WILL USE FALLBACK")
-                            print(f"  ❌❌❌ This is why blur score shows 200!")
-                            score_data = None
-                
-                # Try direct HuggingFace if bridge failed
-                if not score_data and hf_direct_available:
-                    hf_result = call_huggingface_direct(filepath)
-                    if hf_result:
-                        # Extract scores and analysis from the result
-                        scores = {}
-                        analysis = {}
-                        
-                        # Handle different response structures
-                        if isinstance(hf_result, dict):
-                            # Direct scores/analysis structure
-                            if 'scores' in hf_result:
-                                scores = hf_result.get('scores', {})
-                                analysis = hf_result.get('analysis', {})
-                            # Everything at root level
-                            else:
-                                # Extract score-like fields
-                                for key in ['aesthetic_score', 'blur_score', 'composition_score', 'combined_score']:
-                                    if key in hf_result:
-                                        scores[key] = hf_result[key]
-                                
-                                # Extract analysis fields
-                                for key in ['blur_category', 'aesthetic_rating', 'recommendation', 'action', 'face_detected']:
-                                    if key in hf_result:
-                                        analysis[key] = hf_result[key]
-                        
-                        # Only use the result if we found actual scores
-                        if scores or analysis:
-                            score_data = {
-                                'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
-                                'blur_score': float(scores.get('blur_score', 100)),
-                                'blur_category': analysis.get('blur_category', 'unknown'),
-                                'composition_score': float(scores.get('composition_score', 5.0)),
-                                'combined_score': float(scores.get('combined_score', 5.0)),
-                                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                                'recommendation': analysis.get('recommendation', 'maybe'),
-                                'action': analysis.get('action', ''),
-                                'ml_source': 'huggingface_direct',
-                                'face_detected': analysis.get('face_detected', False)
+                        if 'blur_category' in hf_result:
+                            analysis = {
+                                'blur_category': hf_result.get('blur_category', 'unknown'),
+                                'aesthetic_rating': hf_result.get('aesthetic_rating', 'fair'),
+                                'recommendation': hf_result.get('recommendation', 'maybe'),
+                                'action': hf_result.get('action', ''),
+                                'face_detected': hf_result.get('face_detected', False)
                             }
-                            
-                            print(f"  ✓ HF Direct scores - A:{score_data['aesthetic_score']:.1f}, "
-                                  f"B:{score_data['blur_score']:.0f}, "
-                                  f"C:{score_data['composition_score']:.1f}")
-                        else:
-                            print(f"  ⚠ HF returned data but no scores found")
-                            score_data = None
-                
-                # Use fallback if all ML methods failed
-                if not score_data:
-                    score_data = simple_fallback_analysis(filepath)
-                    print(f"  → Using fallback - A:{score_data['aesthetic_score']:.1f}, "
-                          f"B:{score_data['blur_score']:.0f}, "
-                          f"C:{score_data['composition_score']:.1f}")
-                
-                results[filepath] = {
-                    'filename': filename,
-                    **score_data
-                }
+                    
+                    if scores:  # We got valid scores from HuggingFace
+                        results[filepath] = {
+                            'filename': filename,
+                            'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
+                            'blur_score': float(scores.get('blur_score', 100)),
+                            'blur_category': analysis.get('blur_category', 'unknown'),
+                            'composition_score': float(scores.get('composition_score', 5.0)),
+                            'combined_score': float(scores.get('combined_score', 5.0)),
+                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                            'recommendation': analysis.get('recommendation', 'maybe'),
+                            'action': analysis.get('action', ''),
+                            'ml_source': 'huggingface',
+                            'face_detected': analysis.get('face_detected', False)
+                        }
+                        
+                        print(f"  ✓ HF scores - A:{results[filepath]['aesthetic_score']:.1f}, "
+                              f"B:{results[filepath]['blur_score']:.0f}, "
+                              f"C:{results[filepath]['composition_score']:.1f}")
+                    else:
+                        # Fallback if HuggingFace didn't return proper scores
+                        results[filepath] = simple_fallback_analysis(filepath, filename)
+                        print(f"  → Using fallback (no valid HF scores)")
+                else:
+                    # Use fallback if HuggingFace failed
+                    results[filepath] = simple_fallback_analysis(filepath, filename)
+                    print(f"  → Using fallback (HF call failed)")
                 
             except Exception as e:
                 print(f"  ✗ Error: {e}")
@@ -627,11 +361,9 @@ def analyze_photos_background(job_id, folder_path):
         print(f"Job {job_id} completed!")
         
         # Print summary
-        bridge_count = sum(1 for r in results.values() if r.get('ml_source') == 'bridge_server')
-        hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface_direct')
+        hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface')
         fallback_count = sum(1 for r in results.values() if 'fallback' in r.get('ml_source', ''))
-        
-        print(f"Summary: {bridge_count} via Bridge, {hf_count} via HF Direct, {fallback_count} via fallback")
+        print(f"Summary: {hf_count} via HuggingFace, {fallback_count} via fallback")
         print(f"{'='*60}\n")
         
     except Exception as e:
@@ -640,89 +372,60 @@ def analyze_photos_background(job_id, folder_path):
         job.status = 'error'
         job.error = str(e)
 
-def simple_fallback_analysis(filepath):
-    """Simple image analysis without ML libraries"""
-    print(f"    🚨🚨🚨 FALLBACK ANALYSIS ACTIVATED - NO ML SCORES!")
-    print(f"    🚨🚨🚨 THIS IS WHY YOU SEE BLUR SCORE = 200!")
-    
+def simple_fallback_analysis(filepath, filename):
+    """Simple image analysis without ML - used when HF fails"""
     try:
         with Image.open(filepath) as img:
             width, height = img.size
             megapixels = (width * height) / 1_000_000
             
-            # Basic aesthetic scoring
-            aesthetic_score = 5.0
-            if megapixels >= 4:
-                aesthetic_score += 2.5
-            elif megapixels >= 2:
-                aesthetic_score += 1.5
-            elif megapixels >= 1:
-                aesthetic_score += 0.5
+            # Basic scoring based on resolution
+            aesthetic_score = 5.0 + min(megapixels / 2, 2.5)
             
-            # Add variety
+            # Add some randomness for variety
             import hashlib
-            file_hash = hashlib.md5(os.path.basename(filepath).encode()).hexdigest()
+            file_hash = hashlib.md5(filename.encode()).hexdigest()
             hash_value = int(file_hash[:4], 16)
             variety = (hash_value % 20 - 10) / 10.0
-            aesthetic_score += variety
-            aesthetic_score = max(1, min(10, aesthetic_score))
+            aesthetic_score = max(1, min(10, aesthetic_score + variety))
             
-            # Simple blur estimation
+            # Simple blur estimation based on file size
             file_size = os.path.getsize(filepath) / 1024  # KB
             size_per_megapixel = file_size / megapixels if megapixels > 0 else 0
             
-            # THIS IS WHERE THE 200 COMES FROM!
             if size_per_megapixel > 150:
-                blur_score = 200  # <-- THE CULPRIT!
+                blur_score = 180  # Good quality
                 blur_category = 'sharp'
-                print(f"    📍 Fallback set blur_score = 200 (file size/megapixel > 150)")
             elif size_per_megapixel > 80:
-                blur_score = 100
+                blur_score = 100  # Medium quality
                 blur_category = 'slightly_blurry'
-                print(f"    📍 Fallback set blur_score = 100")
             else:
-                blur_score = 50
+                blur_score = 50  # Low quality
                 blur_category = 'blurry'
-                print(f"    📍 Fallback set blur_score = 50")
             
-            # Basic composition score
             composition_score = 5.0 + (hash_value % 30 - 15) / 5.0
             composition_score = max(1, min(10, composition_score))
             
-            # Calculate combined score
-            blur_normalized = min(blur_score / 50, 10)
-            combined_score = (blur_normalized * 0.4) + (aesthetic_score * 0.3) + (composition_score * 0.3)
+            combined_score = (aesthetic_score * 0.4 + (blur_score/20) * 0.3 + composition_score * 0.3)
             
-            # Determine recommendation
-            if blur_category == 'sharp' and aesthetic_score >= 7:
-                recommendation = 'use'
-                action = 'Ready to use (FALLBACK ANALYSIS)'
-            elif aesthetic_score >= 6:
-                recommendation = 'maybe'
-                action = 'Manual review needed (FALLBACK ANALYSIS)'
-            else:
-                recommendation = 'skip'
-                action = 'Below quality threshold (FALLBACK ANALYSIS)'
-            
-            result = {
+            return {
+                'filename': filename,
                 'aesthetic_score': round(aesthetic_score, 2),
                 'blur_score': round(blur_score, 2),
                 'blur_category': blur_category,
                 'composition_score': round(composition_score, 2),
                 'combined_score': round(combined_score, 2),
-                'aesthetic_rating': 'excellent' if aesthetic_score >= 7 else 'good' if aesthetic_score >= 5 else 'fair',
-                'recommendation': recommendation,
-                'action': action,
-                'ml_source': 'FALLBACK_NOT_ML',
+                'aesthetic_rating': 'good' if aesthetic_score >= 7 else 'fair' if aesthetic_score >= 5 else 'poor',
+                'recommendation': 'use' if combined_score >= 7 else 'maybe' if combined_score >= 5 else 'skip',
+                'action': 'Fallback analysis - manual review recommended',
+                'ml_source': 'fallback',
                 'face_detected': False
             }
-            
-            print(f"    🚨 FALLBACK RESULT: blur={result['blur_score']}, aesthetic={result['aesthetic_score']}")
-            return result
             
     except Exception as e:
         print(f"  Error in fallback: {e}")
         return {
+            'filename': filename,
             'aesthetic_score': 5.0,
             'blur_score': 100,
             'blur_category': 'unknown',
@@ -871,7 +574,6 @@ def health():
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'memory_usage_mb': round(memory_mb, 2),
-        'bridge_url': BRIDGE_URL,
         'hf_space_url': HF_SPACE_URL
     })
 
