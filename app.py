@@ -17,6 +17,9 @@ from io import BytesIO
 import random
 import traceback
 
+# Bridge server URL (Vercel deployment)
+BRIDGE_URL = os.getenv('BRIDGE_URL', 'https://yearbook-bridge.vercel.app')
+
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
 
@@ -92,8 +95,9 @@ def index():
     return jsonify({
         'status': 'ok',
         'message': 'Yearbook Photo Analyzer API',
-        'version': '3.0.0',
-        'mode': 'HTTP Direct',
+        'version': '3.1.0',
+        'mode': 'HTTP Direct with Bridge',
+        'bridge_url': BRIDGE_URL,
         'hf_space': HF_SPACE_URL,
         'endpoints': {
             'upload': '/upload',
@@ -156,8 +160,8 @@ def upload_files():
         'total_files': len(saved_files)
     })
 
-def call_huggingface_api(image_path):
-    """Call HuggingFace Space API directly using HTTP"""
+def call_bridge_server(image_path):
+    """Call Vercel bridge server for HuggingFace analysis"""
     try:
         # Load and prepare image
         with Image.open(image_path) as img:
@@ -173,10 +177,61 @@ def call_huggingface_api(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        # Prepare the request
-        api_url = f"{HF_SPACE_URL}/predict"
+        # Call bridge server
+        api_url = f"{BRIDGE_URL}/api/analyze"
         
-        # Call the API
+        response = requests.post(
+            api_url,
+            json={
+                "image": img_base64,
+                "enhance": True
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        print(f"  Bridge server status: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Ensure we have the expected format
+            if isinstance(result, dict) and (result.get('status') == 'success' or 'scores' in result):
+                return result
+            
+            print(f"  Unexpected response format from bridge: {result}")
+            return None
+        else:
+            print(f"  Bridge server returned {response.status_code}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        print(f"  Bridge server timeout")
+        return None
+    except Exception as e:
+        print(f"  Error calling bridge server: {e}")
+        return None
+
+def call_huggingface_direct(image_path):
+    """Call HuggingFace Space directly (fallback)"""
+    try:
+        # Load and prepare image
+        with Image.open(image_path) as img:
+            img = img.convert('RGB')
+            
+            # Resize if too large
+            max_size = 1024
+            if img.width > max_size or img.height > max_size:
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Convert to base64
+            buffered = BytesIO()
+            img.save(buffered, format="PNG", optimize=True)
+            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        # Direct HuggingFace API call
+        api_url = f"{HF_SPACE_URL}/run/predict"
+        
         response = requests.post(
             api_url,
             json={
@@ -190,28 +245,24 @@ def call_huggingface_api(image_path):
         )
         
         if response.status_code == 200:
-            # The response should be the actual result, not wrapped
             result = response.json()
             
-            # Based on your test, the result is directly the analysis result
-            if isinstance(result, dict) and result.get('status') == 'success':
-                return result
-            else:
-                print(f"Unexpected response format: {result}")
-                return None
-        else:
-            print(f"HuggingFace API returned {response.status_code}")
-            return None
+            # Handle Gradio response format
+            if isinstance(result, dict) and 'data' in result:
+                data = result.get('data', [])
+                if data and isinstance(data[0], dict):
+                    return data[0]
             
-    except requests.exceptions.Timeout:
-        print(f"HuggingFace API timeout")
+            return result
+        
         return None
+            
     except Exception as e:
-        print(f"Error calling HuggingFace: {e}")
+        print(f"  Error calling HuggingFace direct: {e}")
         return None
 
 def analyze_photos_background(job_id, folder_path):
-    """Analyze photos using direct HTTP requests to HuggingFace"""
+    """Analyze photos using bridge server or direct HuggingFace"""
     job = processing_jobs.get(job_id)
     if not job:
         return
@@ -219,17 +270,34 @@ def analyze_photos_background(job_id, folder_path):
     try:
         print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
-        print(f"Using HuggingFace Space: {HF_SPACE_URL}")
+        print(f"Bridge Server: {BRIDGE_URL}")
+        print(f"HuggingFace Space: {HF_SPACE_URL}")
         print(f"{'='*60}")
         
-        # Test HuggingFace connection
-        test_response = requests.get(HF_SPACE_URL, timeout=5)
-        if test_response.status_code == 200:
-            print("✓ HuggingFace Space is accessible")
-            hf_available = True
-        else:
-            print("⚠ HuggingFace Space not accessible, using fallback")
-            hf_available = False
+        # Test which services are available
+        bridge_available = False
+        hf_direct_available = False
+        
+        # Test bridge server
+        try:
+            test_response = requests.get(f"{BRIDGE_URL}/api/health", timeout=5)
+            if test_response.status_code == 200:
+                print("✓ Bridge server is online")
+                bridge_available = True
+            else:
+                print("⚠ Bridge server not responding properly")
+        except:
+            print("⚠ Cannot reach bridge server")
+        
+        # Test direct HuggingFace (quick check)
+        if not bridge_available:
+            try:
+                test_response = requests.get(HF_SPACE_URL, timeout=5)
+                if test_response.status_code == 200:
+                    print("✓ HuggingFace Space is accessible")
+                    hf_direct_available = True
+            except:
+                print("⚠ Cannot reach HuggingFace Space directly")
         
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -254,9 +322,33 @@ def analyze_photos_background(job_id, folder_path):
             try:
                 score_data = None
                 
-                # Try HuggingFace first
-                if hf_available:
-                    hf_result = call_huggingface_api(filepath)
+                # Try bridge server first
+                if bridge_available:
+                    bridge_result = call_bridge_server(filepath)
+                    if bridge_result:
+                        scores = bridge_result.get('scores', {})
+                        analysis = bridge_result.get('analysis', {})
+                        
+                        score_data = {
+                            'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
+                            'blur_score': float(scores.get('blur_score', 100)),
+                            'blur_category': analysis.get('blur_category', 'unknown'),
+                            'composition_score': float(scores.get('composition_score', 5.0)),
+                            'combined_score': float(scores.get('combined_score', 5.0)),
+                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                            'recommendation': analysis.get('recommendation', 'maybe'),
+                            'action': analysis.get('action', ''),
+                            'ml_source': 'bridge_server',
+                            'face_detected': analysis.get('face_detected', False)
+                        }
+                        
+                        print(f"  ✓ Bridge scores - A:{score_data['aesthetic_score']:.1f}, "
+                              f"B:{score_data['blur_score']:.0f}, "
+                              f"C:{score_data['composition_score']:.1f}")
+                
+                # Try direct HuggingFace if bridge failed
+                if not score_data and hf_direct_available:
+                    hf_result = call_huggingface_direct(filepath)
                     if hf_result:
                         scores = hf_result.get('scores', {})
                         analysis = hf_result.get('analysis', {})
@@ -270,15 +362,15 @@ def analyze_photos_background(job_id, folder_path):
                             'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
                             'recommendation': analysis.get('recommendation', 'maybe'),
                             'action': analysis.get('action', ''),
-                            'ml_source': 'huggingface',
+                            'ml_source': 'huggingface_direct',
                             'face_detected': analysis.get('face_detected', False)
                         }
                         
-                        print(f"  ✓ HF scores - A:{score_data['aesthetic_score']:.1f}, "
+                        print(f"  ✓ HF Direct scores - A:{score_data['aesthetic_score']:.1f}, "
                               f"B:{score_data['blur_score']:.0f}, "
                               f"C:{score_data['composition_score']:.1f}")
                 
-                # Use fallback if HuggingFace failed
+                # Use fallback if all ML methods failed
                 if not score_data:
                     score_data = simple_fallback_analysis(filepath)
                     print(f"  → Using fallback - A:{score_data['aesthetic_score']:.1f}, "
@@ -322,9 +414,11 @@ def analyze_photos_background(job_id, folder_path):
         print(f"Job {job_id} completed!")
         
         # Print summary
-        hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface')
+        bridge_count = sum(1 for r in results.values() if r.get('ml_source') == 'bridge_server')
+        hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface_direct')
         fallback_count = sum(1 for r in results.values() if 'fallback' in r.get('ml_source', ''))
-        print(f"Summary: {hf_count} via HuggingFace, {fallback_count} via fallback")
+        
+        print(f"Summary: {bridge_count} via Bridge, {hf_count} via HF Direct, {fallback_count} via fallback")
         print(f"{'='*60}\n")
         
     except Exception as e:
@@ -553,7 +647,9 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'memory_usage_mb': round(memory_mb, 2)
+        'memory_usage_mb': round(memory_mb, 2),
+        'bridge_url': BRIDGE_URL,
+        'hf_space_url': HF_SPACE_URL
     })
 
 if __name__ == '__main__':
