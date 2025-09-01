@@ -163,7 +163,7 @@ def analyze_photos_background(job_id, folder_path):
         print(f"{'='*60}")
         
         # Get HuggingFace URL from environment or use default
-        hf_url = os.getenv('HF_SPACE_URL', 'https://pororoororoq-yearbook-photo-analyzer.hf.space')
+        hf_url = os.getenv('HF_SPACE_URL', 'https://pororoororoq-photo-analyzer.hf.space')
         print(f"Using HuggingFace Space: {hf_url}")
         
         # Test HuggingFace connection
