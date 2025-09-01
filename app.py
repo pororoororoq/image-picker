@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_file
+
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import os
@@ -16,7 +16,31 @@ from PIL import Image
 from io import BytesIO
 import random
 import traceback
+from flask import Flask, request, jsonify, send_file
 
+def call_huggingface_direct(image_path):
+    """Call HuggingFace Space directly (fallback)"""
+    try:
+        # Load and prepare image
+        with Image.open(image_path) as img:
+            img = img.convert('RGB')
+            
+            # Resize if too large
+            max_size = 1024
+            if img.width > max_size or img.height > max_size:
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Convert to base64
+            buffered = BytesIO()
+            img.save(buffered, format="PNG", optimize=True)
+            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        # Direct HuggingFace API callfrom flask import Flask, request, jsonify, send_file
+    except Exception as e:
+        print(f"  Error calling HuggingFace direct: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 # Bridge server URL (Vercel deployment)
 BRIDGE_URL = os.getenv('BRIDGE_URL', 'https://yearbook-bridge.vercel.app')
 
@@ -184,6 +208,7 @@ def call_bridge_server(image_path):
             f"{BRIDGE_URL}/api/analyze.ts"
         ]
         
+        response = None
         for api_url in bridge_urls:
             try:
                 response = requests.post(
@@ -200,6 +225,31 @@ def call_bridge_server(image_path):
                     break
             except:
                 continue
+        
+        if response and response.status_code == 200:
+            result = response.json()
+            
+            print(f"  🔍 Bridge raw response type: {type(result)}")
+            if isinstance(result, dict):
+                print(f"  🔍 Bridge response keys: {list(result.keys())}")
+                if 'scores' in result:
+                    print(f"  🔍 Scores found: {result['scores']}")
+                if 'analysis' in result:
+                    print(f"  🔍 Analysis found: {result['analysis']}")
+            
+            return result
+        else:
+            print(f"  Bridge server returned {response.status_code if response else 'no response'}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        print(f"  Bridge server timeout")
+        return None
+    except Exception as e:
+        print(f"  Error calling bridge server: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
         
         print(f"  Bridge server status: {response.status_code}")
         
@@ -426,9 +476,9 @@ def analyze_photos_background(job_id, folder_path):
                 if bridge_available:
                     bridge_result = call_bridge_server(filepath)
                     if bridge_result:
-                        print(f"  Bridge result type: {type(bridge_result)}")
+                        print(f"  🔍 Bridge result type: {type(bridge_result)}")
                         if isinstance(bridge_result, dict):
-                            print(f"  Bridge result keys: {list(bridge_result.keys())[:10]}")  # First 10 keys
+                            print(f"  🔍 Bridge result keys: {list(bridge_result.keys())[:10]}")  # First 10 keys
                         
                         # Extract scores and analysis from the result
                         scores = {}
@@ -436,50 +486,57 @@ def analyze_photos_background(job_id, folder_path):
                         
                         # Handle different response structures
                         if isinstance(bridge_result, dict):
-                            # Direct scores/analysis structure
-                            if 'scores' in bridge_result:
-                                scores = bridge_result.get('scores', {})
-                                analysis = bridge_result.get('analysis', {})
-                            # Everything at root level
-                            else:
-                                # Extract score-like fields
+                            # Best case: Direct scores/analysis structure
+                            if 'scores' in bridge_result and isinstance(bridge_result['scores'], dict):
+                                scores = bridge_result['scores']
+                                print(f"  ✅ Found scores in 'scores' key: {scores}")
+                            
+                            if 'analysis' in bridge_result and isinstance(bridge_result['analysis'], dict):
+                                analysis = bridge_result['analysis']
+                                print(f"  ✅ Found analysis in 'analysis' key: {analysis}")
+                            
+                            # Fallback: Look for scores at root level
+                            if not scores:
                                 for key in ['aesthetic_score', 'blur_score', 'composition_score', 'combined_score']:
                                     if key in bridge_result:
                                         scores[key] = bridge_result[key]
-                                
-                                # Extract analysis fields
+                                        print(f"  📍 Found {key} at root: {bridge_result[key]}")
+                            
+                            # Fallback: Look for analysis at root level
+                            if not analysis:
                                 for key in ['blur_category', 'aesthetic_rating', 'recommendation', 'action', 'face_detected']:
                                     if key in bridge_result:
                                         analysis[key] = bridge_result[key]
-                                
-                                # If we didn't find structured data, check for nested structure
-                                if not scores and 'image_info' in bridge_result:
-                                    # It might be the full HF response structure
-                                    if 'scores' in bridge_result:
-                                        scores = bridge_result['scores']
-                                    if 'analysis' in bridge_result:
-                                        analysis = bridge_result['analysis']
+                                        print(f"  📍 Found {key} at root: {bridge_result[key]}")
                         
-                        # Only use the result if we found actual scores
-                        if scores or analysis:
+                        # Debug: Print exactly what we extracted
+                        print(f"  🎯 Final extracted scores: {scores}")
+                        print(f"  🎯 Final extracted analysis: {analysis}")
+                        
+                        # Only use the result if we found actual numeric scores
+                        if scores and any(k in scores for k in ['aesthetic_score', 'blur_score', 'composition_score']):
+                            # CRITICAL: Use the ACTUAL values from HuggingFace, not defaults!
                             score_data = {
-                                'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
-                                'blur_score': float(scores.get('blur_score', 100)),
+                                'aesthetic_score': float(scores['aesthetic_score']) if 'aesthetic_score' in scores else 5.0,
+                                'blur_score': float(scores['blur_score']) if 'blur_score' in scores else 100.0,
                                 'blur_category': analysis.get('blur_category', 'unknown'),
-                                'composition_score': float(scores.get('composition_score', 5.0)),
-                                'combined_score': float(scores.get('combined_score', 5.0)),
+                                'composition_score': float(scores['composition_score']) if 'composition_score' in scores else 5.0,
+                                'combined_score': float(scores['combined_score']) if 'combined_score' in scores else 5.0,
                                 'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
                                 'recommendation': analysis.get('recommendation', 'maybe'),
                                 'action': analysis.get('action', ''),
-                                'ml_source': 'bridge_server',
+                                'ml_source': 'huggingface_via_bridge',
                                 'face_detected': analysis.get('face_detected', False)
                             }
                             
-                            print(f"  ✓ Bridge scores - A:{score_data['aesthetic_score']:.1f}, "
-                                  f"B:{score_data['blur_score']:.0f}, "
-                                  f"C:{score_data['composition_score']:.1f}")
+                            print(f"  ✅✅✅ USING HUGGINGFACE SCORES:")
+                            print(f"       Aesthetic: {score_data['aesthetic_score']:.1f}")
+                            print(f"       Blur: {score_data['blur_score']:.0f} (THIS SHOULD NOT BE 200!)")
+                            print(f"       Composition: {score_data['composition_score']:.1f}")
+                            print(f"       Category: {score_data['blur_category']}")
                         else:
-                            print(f"  ⚠ Bridge returned data but no scores found")
+                            print(f"  ❌❌❌ NO VALID SCORES FOUND - WILL USE FALLBACK")
+                            print(f"  ❌❌❌ This is why blur score shows 200!")
                             score_data = None
                 
                 # Try direct HuggingFace if bridge failed
@@ -589,6 +646,9 @@ def analyze_photos_background(job_id, folder_path):
 
 def simple_fallback_analysis(filepath):
     """Simple image analysis without ML libraries"""
+    print(f"    🚨🚨🚨 FALLBACK ANALYSIS ACTIVATED - NO ML SCORES!")
+    print(f"    🚨🚨🚨 THIS IS WHY YOU SEE BLUR SCORE = 200!")
+    
     try:
         with Image.open(filepath) as img:
             width, height = img.size
@@ -615,15 +675,19 @@ def simple_fallback_analysis(filepath):
             file_size = os.path.getsize(filepath) / 1024  # KB
             size_per_megapixel = file_size / megapixels if megapixels > 0 else 0
             
+            # THIS IS WHERE THE 200 COMES FROM!
             if size_per_megapixel > 150:
-                blur_score = 200
+                blur_score = 200  # <-- THE CULPRIT!
                 blur_category = 'sharp'
+                print(f"    📍 Fallback set blur_score = 200 (file size/megapixel > 150)")
             elif size_per_megapixel > 80:
                 blur_score = 100
                 blur_category = 'slightly_blurry'
+                print(f"    📍 Fallback set blur_score = 100")
             else:
                 blur_score = 50
                 blur_category = 'blurry'
+                print(f"    📍 Fallback set blur_score = 50")
             
             # Basic composition score
             composition_score = 5.0 + (hash_value % 30 - 15) / 5.0
@@ -636,15 +700,15 @@ def simple_fallback_analysis(filepath):
             # Determine recommendation
             if blur_category == 'sharp' and aesthetic_score >= 7:
                 recommendation = 'use'
-                action = 'Ready to use'
+                action = 'Ready to use (FALLBACK ANALYSIS)'
             elif aesthetic_score >= 6:
                 recommendation = 'maybe'
-                action = 'Manual review needed'
+                action = 'Manual review needed (FALLBACK ANALYSIS)'
             else:
                 recommendation = 'skip'
-                action = 'Below quality threshold'
+                action = 'Below quality threshold (FALLBACK ANALYSIS)'
             
-            return {
+            result = {
                 'aesthetic_score': round(aesthetic_score, 2),
                 'blur_score': round(blur_score, 2),
                 'blur_category': blur_category,
@@ -653,9 +717,12 @@ def simple_fallback_analysis(filepath):
                 'aesthetic_rating': 'excellent' if aesthetic_score >= 7 else 'good' if aesthetic_score >= 5 else 'fair',
                 'recommendation': recommendation,
                 'action': action,
-                'ml_source': 'simple_fallback',
+                'ml_source': 'FALLBACK_NOT_ML',
                 'face_detected': False
             }
+            
+            print(f"    🚨 FALLBACK RESULT: blur={result['blur_score']}, aesthetic={result['aesthetic_score']}")
+            return result
             
     except Exception as e:
         print(f"  Error in fallback: {e}")
