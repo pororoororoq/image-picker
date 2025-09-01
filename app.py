@@ -177,30 +177,50 @@ def call_bridge_server(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        # Call bridge server
-        api_url = f"{BRIDGE_URL}/api/analyze"
+        # Call bridge server (with fallback URLs)
+        bridge_urls = [
+            f"{BRIDGE_URL}/api/analyze",
+            f"{BRIDGE_URL}/api/analyze.py",
+            f"{BRIDGE_URL}/api/analyze.ts"
+        ]
         
-        response = requests.post(
-            api_url,
-            json={
-                "image": img_base64,
-                "enhance": True
-            },
-            headers={"Content-Type": "application/json"},
-            timeout=30
-        )
+        for api_url in bridge_urls:
+            try:
+                response = requests.post(
+                    api_url,
+                    json={
+                        "image": img_base64,
+                        "enhance": True
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    break
+            except:
+                continue
         
         print(f"  Bridge server status: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
             
-            # Ensure we have the expected format
-            if isinstance(result, dict) and (result.get('status') == 'success' or 'scores' in result):
-                return result
+            # Parse the response properly
+            if isinstance(result, dict):
+                # Check if it has the expected structure
+                if 'scores' in result or 'status' in result:
+                    return result
+                # Handle wrapped response
+                elif 'data' in result and isinstance(result['data'], list):
+                    if len(result['data']) > 0:
+                        return result['data'][0]
+                # Handle other formats
+                elif 'result' in result:
+                    return result['result']
             
             print(f"  Unexpected response format from bridge: {result}")
-            return None
+            return result  # Return it anyway, will be parsed later
         else:
             print(f"  Bridge server returned {response.status_code}")
             return None
@@ -244,21 +264,101 @@ def call_huggingface_direct(image_path):
             timeout=30
         )
         
+        print(f"  HF Direct API status: {response.status_code}")
+        
         if response.status_code == 200:
             result = response.json()
+            print(f"  HF Response type: {type(result)}, keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
             
             # Handle Gradio response format
             if isinstance(result, dict) and 'data' in result:
                 data = result.get('data', [])
-                if data and isinstance(data[0], dict):
-                    return data[0]
+                if data and len(data) > 0:
+                    actual_data = data[0]
+                    print(f"  HF data[0] type: {type(actual_data)}")
+                    
+                    # If it's a string, try to parse it as JSON
+                    if isinstance(actual_data, str):
+                        try:
+                            parsed = json.loads(actual_data)
+                            print(f"  Parsed JSON from string response")
+                            return parsed
+                        except:
+                            print(f"  Could not parse string response as JSON")
+                            # Try to extract values from the string
+                            return parse_string_response(actual_data)
+                    
+                    return actual_data
             
-            return result
+            # Already in the right format
+            elif isinstance(result, dict) and ('scores' in result or 'aesthetic_score' in result):
+                return result
+            
+            print(f"  Unexpected HF response format")
+            return result  # Return anyway, let the caller handle it
         
         return None
             
     except Exception as e:
         print(f"  Error calling HuggingFace direct: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def parse_string_response(response_str):
+    """Try to parse values from a string response"""
+    try:
+        # Initialize result
+        result = {
+            'scores': {},
+            'analysis': {}
+        }
+        
+        # Try to find numeric values in the string
+        import re
+        
+        # Look for aesthetic score
+        aesthetic_match = re.search(r'aesthetic[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
+        if aesthetic_match:
+            result['scores']['aesthetic_score'] = float(aesthetic_match.group(1))
+        
+        # Look for blur score
+        blur_match = re.search(r'blur[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
+        if blur_match:
+            result['scores']['blur_score'] = float(blur_match.group(1))
+        
+        # Look for composition score
+        comp_match = re.search(r'composition[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
+        if comp_match:
+            result['scores']['composition_score'] = float(comp_match.group(1))
+        
+        # Look for combined score
+        combined_match = re.search(r'combined[_\s]*score[:\s]*([0-9.]+)', response_str, re.IGNORECASE)
+        if combined_match:
+            result['scores']['combined_score'] = float(combined_match.group(1))
+        
+        # Look for blur category
+        if 'sharp' in response_str.lower():
+            result['analysis']['blur_category'] = 'sharp'
+        elif 'slightly_blurry' in response_str.lower() or 'slight' in response_str.lower():
+            result['analysis']['blur_category'] = 'slightly_blurry'
+        elif 'blurry' in response_str.lower():
+            result['analysis']['blur_category'] = 'blurry'
+        
+        # Look for recommendations
+        if 'use' in response_str.lower():
+            result['analysis']['recommendation'] = 'use'
+        elif 'enhance' in response_str.lower():
+            result['analysis']['recommendation'] = 'enhance'
+        elif 'skip' in response_str.lower():
+            result['analysis']['recommendation'] = 'skip'
+        else:
+            result['analysis']['recommendation'] = 'maybe'
+        
+        return result if result['scores'] else None
+        
+    except Exception as e:
+        print(f"  Error parsing string response: {e}")
         return None
 
 def analyze_photos_background(job_id, folder_path):
@@ -326,49 +426,109 @@ def analyze_photos_background(job_id, folder_path):
                 if bridge_available:
                     bridge_result = call_bridge_server(filepath)
                     if bridge_result:
-                        scores = bridge_result.get('scores', {})
-                        analysis = bridge_result.get('analysis', {})
+                        print(f"  Bridge result type: {type(bridge_result)}")
+                        if isinstance(bridge_result, dict):
+                            print(f"  Bridge result keys: {list(bridge_result.keys())[:10]}")  # First 10 keys
                         
-                        score_data = {
-                            'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
-                            'blur_score': float(scores.get('blur_score', 100)),
-                            'blur_category': analysis.get('blur_category', 'unknown'),
-                            'composition_score': float(scores.get('composition_score', 5.0)),
-                            'combined_score': float(scores.get('combined_score', 5.0)),
-                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                            'recommendation': analysis.get('recommendation', 'maybe'),
-                            'action': analysis.get('action', ''),
-                            'ml_source': 'bridge_server',
-                            'face_detected': analysis.get('face_detected', False)
-                        }
+                        # Extract scores and analysis from the result
+                        scores = {}
+                        analysis = {}
                         
-                        print(f"  ✓ Bridge scores - A:{score_data['aesthetic_score']:.1f}, "
-                              f"B:{score_data['blur_score']:.0f}, "
-                              f"C:{score_data['composition_score']:.1f}")
+                        # Handle different response structures
+                        if isinstance(bridge_result, dict):
+                            # Direct scores/analysis structure
+                            if 'scores' in bridge_result:
+                                scores = bridge_result.get('scores', {})
+                                analysis = bridge_result.get('analysis', {})
+                            # Everything at root level
+                            else:
+                                # Extract score-like fields
+                                for key in ['aesthetic_score', 'blur_score', 'composition_score', 'combined_score']:
+                                    if key in bridge_result:
+                                        scores[key] = bridge_result[key]
+                                
+                                # Extract analysis fields
+                                for key in ['blur_category', 'aesthetic_rating', 'recommendation', 'action', 'face_detected']:
+                                    if key in bridge_result:
+                                        analysis[key] = bridge_result[key]
+                                
+                                # If we didn't find structured data, check for nested structure
+                                if not scores and 'image_info' in bridge_result:
+                                    # It might be the full HF response structure
+                                    if 'scores' in bridge_result:
+                                        scores = bridge_result['scores']
+                                    if 'analysis' in bridge_result:
+                                        analysis = bridge_result['analysis']
+                        
+                        # Only use the result if we found actual scores
+                        if scores or analysis:
+                            score_data = {
+                                'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
+                                'blur_score': float(scores.get('blur_score', 100)),
+                                'blur_category': analysis.get('blur_category', 'unknown'),
+                                'composition_score': float(scores.get('composition_score', 5.0)),
+                                'combined_score': float(scores.get('combined_score', 5.0)),
+                                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                                'recommendation': analysis.get('recommendation', 'maybe'),
+                                'action': analysis.get('action', ''),
+                                'ml_source': 'bridge_server',
+                                'face_detected': analysis.get('face_detected', False)
+                            }
+                            
+                            print(f"  ✓ Bridge scores - A:{score_data['aesthetic_score']:.1f}, "
+                                  f"B:{score_data['blur_score']:.0f}, "
+                                  f"C:{score_data['composition_score']:.1f}")
+                        else:
+                            print(f"  ⚠ Bridge returned data but no scores found")
+                            score_data = None
                 
                 # Try direct HuggingFace if bridge failed
                 if not score_data and hf_direct_available:
                     hf_result = call_huggingface_direct(filepath)
                     if hf_result:
-                        scores = hf_result.get('scores', {})
-                        analysis = hf_result.get('analysis', {})
+                        # Extract scores and analysis from the result
+                        scores = {}
+                        analysis = {}
                         
-                        score_data = {
-                            'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
-                            'blur_score': float(scores.get('blur_score', 100)),
-                            'blur_category': analysis.get('blur_category', 'unknown'),
-                            'composition_score': float(scores.get('composition_score', 5.0)),
-                            'combined_score': float(scores.get('combined_score', 5.0)),
-                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                            'recommendation': analysis.get('recommendation', 'maybe'),
-                            'action': analysis.get('action', ''),
-                            'ml_source': 'huggingface_direct',
-                            'face_detected': analysis.get('face_detected', False)
-                        }
+                        # Handle different response structures
+                        if isinstance(hf_result, dict):
+                            # Direct scores/analysis structure
+                            if 'scores' in hf_result:
+                                scores = hf_result.get('scores', {})
+                                analysis = hf_result.get('analysis', {})
+                            # Everything at root level
+                            else:
+                                # Extract score-like fields
+                                for key in ['aesthetic_score', 'blur_score', 'composition_score', 'combined_score']:
+                                    if key in hf_result:
+                                        scores[key] = hf_result[key]
+                                
+                                # Extract analysis fields
+                                for key in ['blur_category', 'aesthetic_rating', 'recommendation', 'action', 'face_detected']:
+                                    if key in hf_result:
+                                        analysis[key] = hf_result[key]
                         
-                        print(f"  ✓ HF Direct scores - A:{score_data['aesthetic_score']:.1f}, "
-                              f"B:{score_data['blur_score']:.0f}, "
-                              f"C:{score_data['composition_score']:.1f}")
+                        # Only use the result if we found actual scores
+                        if scores or analysis:
+                            score_data = {
+                                'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
+                                'blur_score': float(scores.get('blur_score', 100)),
+                                'blur_category': analysis.get('blur_category', 'unknown'),
+                                'composition_score': float(scores.get('composition_score', 5.0)),
+                                'combined_score': float(scores.get('combined_score', 5.0)),
+                                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                                'recommendation': analysis.get('recommendation', 'maybe'),
+                                'action': analysis.get('action', ''),
+                                'ml_source': 'huggingface_direct',
+                                'face_detected': analysis.get('face_detected', False)
+                            }
+                            
+                            print(f"  ✓ HF Direct scores - A:{score_data['aesthetic_score']:.1f}, "
+                                  f"B:{score_data['blur_score']:.0f}, "
+                                  f"C:{score_data['composition_score']:.1f}")
+                        else:
+                            print(f"  ⚠ HF returned data but no scores found")
+                            score_data = None
                 
                 # Use fallback if all ML methods failed
                 if not score_data:
