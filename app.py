@@ -36,16 +36,20 @@ def call_huggingface_direct(image_path):
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
         # Direct HuggingFace API callfrom flask import Flask, request, jsonify, send_file
-    except Exception as e:
-        print(f"  Error calling HuggingFace direct: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
+    except Exception as e:  
+            print(f"  Error calling HuggingFace direct: {e}")
+            import traceback
+            traceback.print_exc()
+            return None 
 # Bridge server URL (Vercel deployment)
 BRIDGE_URL = os.getenv('BRIDGE_URL', 'https://yearbook-bridge.vercel.app')
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
+
+print(f"=== STARTUP CONFIG ===")
+print(f"Bridge URL: {BRIDGE_URL}")
+print(f"======================")
 
 # Configure CORS
 CORS(app, 
@@ -425,29 +429,20 @@ def analyze_photos_background(job_id, folder_path):
         print(f"{'='*60}")
         
         # Test which services are available
-        bridge_available = False
-        hf_direct_available = False
+        bridge_available = True  # FORCE bridge to always be tried first!
+        hf_direct_available = False  # NEVER try direct HF from Render
         
-        # Test bridge server
+        # Test bridge server (but don't block if it fails the health check)
         try:
             test_response = requests.get(f"{BRIDGE_URL}/api/health", timeout=5)
             if test_response.status_code == 200:
-                print("✓ Bridge server is online")
-                bridge_available = True
+                print(f"✓ Bridge server health check passed at {BRIDGE_URL}")
             else:
-                print("⚠ Bridge server not responding properly")
-        except:
-            print("⚠ Cannot reach bridge server")
+                print(f"⚠ Bridge health check returned {test_response.status_code}, but will try anyway")
+        except Exception as e:
+            print(f"⚠ Bridge health check failed ({e}), but will try anyway")
         
-        # Test direct HuggingFace (quick check)
-        if not bridge_available:
-            try:
-                test_response = requests.get(HF_SPACE_URL, timeout=5)
-                if test_response.status_code == 200:
-                    print("✓ HuggingFace Space is accessible")
-                    hf_direct_available = True
-            except:
-                print("⚠ Cannot reach HuggingFace Space directly")
+        print(f"📡 Will use bridge server at: {BRIDGE_URL}/api/analyze")
         
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -472,8 +467,9 @@ def analyze_photos_background(job_id, folder_path):
             try:
                 score_data = None
                 
-                # Try bridge server first
+                # Try bridge server first (THIS IS THE ONLY WAY THAT WORKS FROM RENDER!)
                 if bridge_available:
+                    print(f"  📡 Calling bridge server at {BRIDGE_URL}")
                     bridge_result = call_bridge_server(filepath)
                     if bridge_result:
                         print(f"  🔍 Bridge result type: {type(bridge_result)}")
