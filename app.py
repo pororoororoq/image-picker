@@ -159,6 +159,7 @@ def analyze_photos_background(job_id, folder_path):
         from blur_detector import BlurDetector
         from aesthetic_scorer import AestheticScorer
         import os
+        import json
         
         # Get HuggingFace URL
         hf_url = os.getenv('HF_SPACE_URL', 'https://pororoororoq-yearbook-photo-analyzer.hf.space')
@@ -197,37 +198,54 @@ def analyze_photos_background(job_id, folder_path):
                 print(f"Full HF Result: {json.dumps(hf_result, indent=2)}")
                 
                 # Check what we actually got
-                print(f"Composition Score: {hf_result.get('composition_score', 'NOT FOUND')}")
                 print(f"ML Source: {hf_result.get('ml_source', 'NOT FOUND')}")
+                print(f"Has blur_score: {'blur_score' in hf_result}")
+                print(f"Blur score value: {hf_result.get('blur_score', 'NOT FOUND')}")
+                print(f"Composition Score: {hf_result.get('composition_score', 'NOT FOUND')}")
                 
-                # Check if HuggingFace gave us blur scores
-                if hf_result.get('ml_source') == 'huggingface' and 'blur_score' in hf_result:
+                # FIXED CONDITION: Check if we got valid HuggingFace results
+                # The issue is likely that ml_source is 'huggingface' but blur_score might be missing or malformed
+                is_hf_success = (
+                    hf_result.get('ml_source') == 'huggingface' and 
+                    'blur_score' in hf_result and 
+                    hf_result.get('blur_score') is not None and
+                    hf_result.get('blur_score') != -1  # Not an error value
+                )
+                
+                print(f"Is HF Success: {is_hf_success}")
+                
+                if is_hf_success:
                     # Use HuggingFace for everything
-                    blur_score = hf_result.get('blur_score', 100)
+                    blur_score = float(hf_result.get('blur_score', 100))
                     blur_category = hf_result.get('blur_category', 'unknown')
-                    aesthetic_score = hf_result.get('aesthetic_score', 5)
+                    aesthetic_score = float(hf_result.get('aesthetic_score', 5))
                     aesthetic_rating = hf_result.get('aesthetic_rating', 'fair')
-                    composition_score = hf_result.get('composition_score', 5)
+                    composition_score = float(hf_result.get('composition_score', 5))
                     recommendation = hf_result.get('recommendation', 'maybe')
                     action = hf_result.get('action', '')
                     
                     print(f"✓ Using HF scores:")
                     print(f"  - Aesthetic: {aesthetic_score}")
                     print(f"  - Blur: {blur_score}")
-                    print(f"  - Composition: {composition_score} <-- CHECK THIS VALUE")
+                    print(f"  - Composition: {composition_score}")
                     
                 else:
                     # Fallback: use local blur detection
-                    print("✗ Using fallback (HF failed or incomplete)")
+                    print(f"✗ Using fallback (HF incomplete or failed)")
+                    print(f"  Reason: ml_source={hf_result.get('ml_source')}, has_blur={('blur_score' in hf_result)}")
+                    
+                    # Use local blur detection
                     blur_score, blur_category = blur_detector.detect_blur_laplacian(filepath)
-                    aesthetic_score = hf_result.get('aesthetic_score', 5)
+                    
+                    # Still try to use HF aesthetic scores if available
+                    aesthetic_score = float(hf_result.get('aesthetic_score', 5))
                     aesthetic_rating = hf_result.get('aesthetic_rating', 'fair')
-                    composition_score = hf_result.get('composition_score', 5)
+                    composition_score = float(hf_result.get('composition_score', 5))
                     
                     print(f"Fallback scores:")
-                    print(f"  - Aesthetic: {aesthetic_score}")
-                    print(f"  - Blur: {blur_score}")
-                    print(f"  - Composition: {composition_score} <-- THIS IS PROBABLY 5")
+                    print(f"  - Aesthetic (from HF): {aesthetic_score}")
+                    print(f"  - Blur (local): {blur_score}")
+                    print(f"  - Composition (from HF): {composition_score}")
                     
                     # Calculate recommendation locally
                     if blur_category == 'sharp' and aesthetic_score >= 7:
@@ -243,15 +261,21 @@ def analyze_photos_background(job_id, folder_path):
                         recommendation = 'maybe'
                         action = 'Average quality'
                 
-                # Calculate combined score
-                blur_normalized = min(blur_score / 100, 10) if blur_score > 0 else 0
+                # Calculate combined score with face-focused blur normalization
+                # Adjusted for face-focused blur scores (lower values)
+                if blur_score > 0:
+                    # For face-focused blur: 200+ is excellent, 100 is good, 50 is poor
+                    blur_normalized = min(blur_score / 50, 10)  
+                else:
+                    blur_normalized = 0
+                    
                 combined = (blur_normalized * 0.4) + (aesthetic_score * 0.3) + (composition_score * 0.3)
                 
                 print(f"Combined Score Calculation:")
-                print(f"  blur_normalized ({blur_normalized}) * 0.4 = {blur_normalized * 0.4}")
-                print(f"  aesthetic ({aesthetic_score}) * 0.3 = {aesthetic_score * 0.3}")
-                print(f"  composition ({composition_score}) * 0.3 = {composition_score * 0.3}")
-                print(f"  TOTAL = {combined}")
+                print(f"  blur_normalized ({blur_normalized:.2f}) * 0.4 = {blur_normalized * 0.4:.2f}")
+                print(f"  aesthetic ({aesthetic_score}) * 0.3 = {aesthetic_score * 0.3:.2f}")
+                print(f"  composition ({composition_score}) * 0.3 = {composition_score * 0.3:.2f}")
+                print(f"  TOTAL = {combined:.2f}")
                 
                 results[filepath] = {
                     'filename': filename,
@@ -260,7 +284,7 @@ def analyze_photos_background(job_id, folder_path):
                     'aesthetic_score': aesthetic_score,
                     'aesthetic_rating': aesthetic_rating,
                     'composition_score': composition_score,
-                    'combined_score': 10, #round(combined, 2),
+                    'combined_score': round(combined, 2),
                     'recommendation': recommendation,
                     'action': action,
                     'ml_source': hf_result.get('ml_source', 'unknown')
@@ -276,7 +300,7 @@ def analyze_photos_background(job_id, folder_path):
                     'blur_category': 'error',
                     'aesthetic_score': 5,
                     'aesthetic_rating': 'error',
-                    'composition_score': 5,  # Added this
+                    'composition_score': 5,
                     'combined_score': 0,
                     'recommendation': 'skip',
                     'action': f'Error: {str(e)}',
