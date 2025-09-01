@@ -10,23 +10,15 @@ from datetime import datetime
 import threading
 import uuid
 import gc
+import requests
+import base64
 from PIL import Image
+from io import BytesIO
 import random
 import traceback
 
-# Try to import gradio_client
-try:
-    from gradio_client import Client, handle_file
-    GRADIO_CLIENT_AVAILABLE = True
-    print("✓ Gradio Client module is available")
-except ImportError:
-    GRADIO_CLIENT_AVAILABLE = False
-    print("⚠ Gradio Client not installed, will use fallback")
-    Client = None
-    handle_file = None
-
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here-change-in-production'
+app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
 
 # Configure CORS
 CORS(app, 
@@ -51,29 +43,8 @@ for folder in [app.config['UPLOAD_FOLDER'], app.config['RESULTS_FOLDER']]:
 # Global processing queue
 processing_jobs = {}
 
-# Initialize Gradio client globally if available
-gradio_client = None
-
-def initialize_gradio_client():
-    """Initialize Gradio Client with proper error handling"""
-    global gradio_client
-    
-    if not GRADIO_CLIENT_AVAILABLE:
-        print("[INIT] Gradio Client module not available")
-        return None
-        
-    try:
-        print("[INIT] Connecting to HuggingFace Space: pororoororoq/photo-analyzer")
-        client = Client("pororoororoq/photo-analyzer")
-        print("[INIT] ✓ Successfully connected to HuggingFace Space!")
-        return client
-    except Exception as e:
-        print(f"[INIT] ✗ Failed to connect: {e}")
-        print("[INIT] Will retry on first use...")
-        return None
-
-# Try to initialize on startup
-gradio_client = initialize_gradio_client()
+# HuggingFace Space URL
+HF_SPACE_URL = os.getenv('HF_SPACE_URL', 'https://pororoororoq-photo-analyzer.hf.space')
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -121,8 +92,9 @@ def index():
     return jsonify({
         'status': 'ok',
         'message': 'Yearbook Photo Analyzer API',
-        'version': '2.1.0',
-        'mode': 'Gradio Client' if gradio_client else 'Fallback',
+        'version': '3.0.0',
+        'mode': 'HTTP Direct',
+        'hf_space': HF_SPACE_URL,
         'endpoints': {
             'upload': '/upload',
             'status': '/status/<job_id>',
@@ -184,8 +156,62 @@ def upload_files():
         'total_files': len(saved_files)
     })
 
+def call_huggingface_api(image_path):
+    """Call HuggingFace Space API directly using HTTP"""
+    try:
+        # Load and prepare image
+        with Image.open(image_path) as img:
+            img = img.convert('RGB')
+            
+            # Resize if too large
+            max_size = 1024
+            if img.width > max_size or img.height > max_size:
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Convert to base64
+            buffered = BytesIO()
+            img.save(buffered, format="PNG", optimize=True)
+            img_base64 = base64.b64encode(buffered.getvalue()).decode()
+        
+        # Prepare the request
+        api_url = f"{HF_SPACE_URL}/predict"
+        
+        # Call the API
+        response = requests.post(
+            api_url,
+            json={
+                "data": [
+                    f"data:image/png;base64,{img_base64}",
+                    True  # enhance_option
+                ]
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            # The response should be the actual result, not wrapped
+            result = response.json()
+            
+            # Based on your test, the result is directly the analysis result
+            if isinstance(result, dict) and result.get('status') == 'success':
+                return result
+            else:
+                print(f"Unexpected response format: {result}")
+                return None
+        else:
+            print(f"HuggingFace API returned {response.status_code}")
+            return None
+            
+    except requests.exceptions.Timeout:
+        print(f"HuggingFace API timeout")
+        return None
+    except Exception as e:
+        print(f"Error calling HuggingFace: {e}")
+        return None
+
 def analyze_photos_background(job_id, folder_path):
-    """Analyze photos using Gradio Client or fallback"""
+    """Analyze photos using direct HTTP requests to HuggingFace"""
     job = processing_jobs.get(job_id)
     if not job:
         return
@@ -193,8 +219,17 @@ def analyze_photos_background(job_id, folder_path):
     try:
         print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
-        print(f"Using: {'Gradio Client' if gradio_client else 'Fallback mode'}")
+        print(f"Using HuggingFace Space: {HF_SPACE_URL}")
         print(f"{'='*60}")
+        
+        # Test HuggingFace connection
+        test_response = requests.get(HF_SPACE_URL, timeout=5)
+        if test_response.status_code == 200:
+            print("✓ HuggingFace Space is accessible")
+            hf_available = True
+        else:
+            print("⚠ HuggingFace Space not accessible, using fallback")
+            hf_available = False
         
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -217,20 +252,43 @@ def analyze_photos_background(job_id, folder_path):
             job.current_file = filename
             
             try:
-                if gradio_client:
-                    score_data = analyze_with_gradio_client(filepath)
-                else:
+                score_data = None
+                
+                # Try HuggingFace first
+                if hf_available:
+                    hf_result = call_huggingface_api(filepath)
+                    if hf_result:
+                        scores = hf_result.get('scores', {})
+                        analysis = hf_result.get('analysis', {})
+                        
+                        score_data = {
+                            'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
+                            'blur_score': float(scores.get('blur_score', 100)),
+                            'blur_category': analysis.get('blur_category', 'unknown'),
+                            'composition_score': float(scores.get('composition_score', 5.0)),
+                            'combined_score': float(scores.get('combined_score', 5.0)),
+                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                            'recommendation': analysis.get('recommendation', 'maybe'),
+                            'action': analysis.get('action', ''),
+                            'ml_source': 'huggingface',
+                            'face_detected': analysis.get('face_detected', False)
+                        }
+                        
+                        print(f"  ✓ HF scores - A:{score_data['aesthetic_score']:.1f}, "
+                              f"B:{score_data['blur_score']:.0f}, "
+                              f"C:{score_data['composition_score']:.1f}")
+                
+                # Use fallback if HuggingFace failed
+                if not score_data:
                     score_data = simple_fallback_analysis(filepath)
+                    print(f"  → Using fallback - A:{score_data['aesthetic_score']:.1f}, "
+                          f"B:{score_data['blur_score']:.0f}, "
+                          f"C:{score_data['composition_score']:.1f}")
                 
                 results[filepath] = {
                     'filename': filename,
                     **score_data
                 }
-                
-                print(f"  ✓ Scores - A:{score_data['aesthetic_score']:.1f}, "
-                      f"B:{score_data['blur_score']:.0f}, "
-                      f"C:{score_data['composition_score']:.1f} "
-                      f"(via {score_data.get('ml_source', 'unknown')})")
                 
             except Exception as e:
                 print(f"  ✗ Error: {e}")
@@ -262,71 +320,18 @@ def analyze_photos_background(job_id, folder_path):
         
         print(f"\n{'='*60}")
         print(f"Job {job_id} completed!")
+        
+        # Print summary
+        hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface')
+        fallback_count = sum(1 for r in results.values() if 'fallback' in r.get('ml_source', ''))
+        print(f"Summary: {hf_count} via HuggingFace, {fallback_count} via fallback")
         print(f"{'='*60}\n")
         
     except Exception as e:
         print(f"Fatal error in job {job_id}: {e}")
+        traceback.print_exc()
         job.status = 'error'
         job.error = str(e)
-
-def analyze_with_gradio_client(filepath):
-    """Analyze image using Gradio Client"""
-    global gradio_client
-    
-    if not gradio_client:
-        print("  Gradio Client not available, using fallback")
-        return simple_fallback_analysis(filepath)
-    
-    try:
-        print(f"  → Using Gradio Client...")
-        
-        # Call the HuggingFace Space using Gradio Client
-        result = gradio_client.predict(
-            image=handle_file(filepath),
-            enhance_option=True,
-            api_name="/predict"
-        )
-        
-        print(f"  Response type: {type(result)}")
-        
-        # The result is ALREADY a dictionary from your HuggingFace Space
-        # No need to parse JSON - it comes back as a proper dict
-        if isinstance(result, dict) and result.get('status') == 'success':
-            scores = result.get('scores', {})
-            analysis = result.get('analysis', {})
-            
-            # Extract all the scores
-            aesthetic = float(scores.get('aesthetic_score', 5.0))
-            blur = float(scores.get('blur_score', 100))
-            composition = float(scores.get('composition_score', 5.0))
-            combined = float(scores.get('combined_score', 5.0))
-            
-            print(f"  ✓ Got HF scores - A:{aesthetic:.1f}, B:{blur:.0f}, C:{composition:.1f}")
-            
-            return {
-                'aesthetic_score': aesthetic,
-                'blur_score': blur,
-                'blur_category': analysis.get('blur_category', 'unknown'),
-                'composition_score': composition,
-                'combined_score': combined,
-                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                'recommendation': analysis.get('recommendation', 'maybe'),
-                'action': analysis.get('action', ''),
-                'ml_source': 'huggingface',
-                'face_detected': analysis.get('face_detected', False)
-            }
-        else:
-            print(f"  Response status not 'success' or invalid structure")
-            print(f"  Response: {json.dumps(result, indent=2) if isinstance(result, dict) else result}")
-            return simple_fallback_analysis(filepath)
-            
-    except Exception as e:
-        print(f"  Gradio Client error: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        # Don't retry - just use fallback
-        return simple_fallback_analysis(filepath)
 
 def simple_fallback_analysis(filepath):
     """Simple image analysis without ML libraries"""
@@ -548,8 +553,7 @@ def health():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'memory_usage_mb': round(memory_mb, 2),
-        'ml_mode': 'Gradio Client' if gradio_client else 'Fallback'
+        'memory_usage_mb': round(memory_mb, 2)
     })
 
 if __name__ == '__main__':
