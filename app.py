@@ -275,7 +275,7 @@ def analyze_with_huggingface(filepath, hf_url):
         
         # Call HuggingFace API
         response = requests.post(
-            f"{hf_url}/run/predict",
+            f"{hf_url}/predict",
             json={
                 "data": [
                     f"data:image/png;base64,{img_base64}",
