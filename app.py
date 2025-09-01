@@ -18,10 +18,12 @@ import traceback
 try:
     from gradio_client import Client, handle_file
     GRADIO_CLIENT_AVAILABLE = True
-    print("✓ Gradio Client available")
+    print("✓ Gradio Client module is available")
 except ImportError:
     GRADIO_CLIENT_AVAILABLE = False
-    print("⚠ Gradio Client not available, will use fallback")
+    print("⚠ Gradio Client not installed, will use fallback")
+    Client = None
+    handle_file = None
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-here-change-in-production'
@@ -51,14 +53,27 @@ processing_jobs = {}
 
 # Initialize Gradio client globally if available
 gradio_client = None
-if GRADIO_CLIENT_AVAILABLE:
+
+def initialize_gradio_client():
+    """Initialize Gradio Client with proper error handling"""
+    global gradio_client
+    
+    if not GRADIO_CLIENT_AVAILABLE:
+        print("[INIT] Gradio Client module not available")
+        return None
+        
     try:
-        # Use the HuggingFace Space ID format
-        gradio_client = Client("pororoororoq/photo-analyzer")
-        print("✓ Connected to HuggingFace Space via Gradio Client")
+        print("[INIT] Connecting to HuggingFace Space: pororoororoq/photo-analyzer")
+        client = Client("pororoororoq/photo-analyzer")
+        print("[INIT] ✓ Successfully connected to HuggingFace Space!")
+        return client
     except Exception as e:
-        print(f"⚠ Could not initialize Gradio Client: {e}")
-        gradio_client = None
+        print(f"[INIT] ✗ Failed to connect: {e}")
+        print("[INIT] Will retry on first use...")
+        return None
+
+# Try to initialize on startup
+gradio_client = initialize_gradio_client()
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -255,63 +270,28 @@ def analyze_photos_background(job_id, folder_path):
         job.error = str(e)
 
 def analyze_with_gradio_client(filepath):
-    """Analyze image using Gradio Client with detailed debugging"""
+    """Analyze image using Gradio Client"""
     global gradio_client
     
-    print(f"  [DEBUG] Starting analyze_with_gradio_client")
-    print(f"  [DEBUG] filepath: {filepath}")
-    print(f"  [DEBUG] gradio_client exists: {gradio_client is not None}")
-    
     if not gradio_client:
-        print("  [DEBUG] No gradio_client, using fallback")
+        print("  Gradio Client not available, using fallback")
         return simple_fallback_analysis(filepath)
     
     try:
-        print(f"  [DEBUG] Gradio Client is available, attempting prediction...")
+        print(f"  → Using Gradio Client...")
         
-        # Check if file exists
-        import os
-        if not os.path.exists(filepath):
-            print(f"  [ERROR] File does not exist: {filepath}")
-            return simple_fallback_analysis(filepath)
-        
-        print(f"  [DEBUG] File exists, size: {os.path.getsize(filepath)} bytes")
-        
-        # Try to call predict
-        print(f"  [DEBUG] Calling client.predict()...")
-        
-        try:
-            from gradio_client import handle_file
-            print(f"  [DEBUG] handle_file imported successfully")
-        except ImportError as e:
-            print(f"  [ERROR] Cannot import handle_file: {e}")
-            return simple_fallback_analysis(filepath)
-        
-        # Make the actual call
-        print(f"  [DEBUG] Making API call to HuggingFace...")
+        # Call the HuggingFace Space using Gradio Client
         result = gradio_client.predict(
             image=handle_file(filepath),
             enhance_option=True,
             api_name="/predict"
         )
         
-        print(f"  [DEBUG] Got response!")
-        print(f"  [DEBUG] Response type: {type(result)}")
+        print(f"  Response type: {type(result)}")
         
-        # Log the actual response
-        if isinstance(result, dict):
-            print(f"  [DEBUG] Response is a dict with keys: {list(result.keys())}")
-            print(f"  [DEBUG] Status: {result.get('status')}")
-            if 'scores' in result:
-                scores = result['scores']
-                print(f"  [DEBUG] Scores: A={scores.get('aesthetic_score')}, B={scores.get('blur_score')}, C={scores.get('composition_score')}")
-        else:
-            print(f"  [DEBUG] Response is not a dict: {result}")
-        
-        # Check if response is valid
+        # The result is ALREADY a dictionary from your HuggingFace Space
+        # No need to parse JSON - it comes back as a proper dict
         if isinstance(result, dict) and result.get('status') == 'success':
-            print(f"  [SUCCESS] Valid response received from HuggingFace!")
-            
             scores = result.get('scores', {})
             analysis = result.get('analysis', {})
             
@@ -321,7 +301,7 @@ def analyze_with_gradio_client(filepath):
             composition = float(scores.get('composition_score', 5.0))
             combined = float(scores.get('combined_score', 5.0))
             
-            print(f"  [SUCCESS] Returning HF scores - A:{aesthetic:.1f}, B:{blur:.0f}, C:{composition:.1f}")
+            print(f"  ✓ Got HF scores - A:{aesthetic:.1f}, B:{blur:.0f}, C:{composition:.1f}")
             
             return {
                 'aesthetic_score': aesthetic,
@@ -332,23 +312,22 @@ def analyze_with_gradio_client(filepath):
                 'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
                 'recommendation': analysis.get('recommendation', 'maybe'),
                 'action': analysis.get('action', ''),
-                'ml_source': 'huggingface',  # This is what your app expects
+                'ml_source': 'huggingface',
                 'face_detected': analysis.get('face_detected', False)
             }
         else:
-            print(f"  [ERROR] Invalid response structure or status not 'success'")
-            if isinstance(result, dict):
-                print(f"  [ERROR] Full response: {json.dumps(result, indent=2)[:500]}")
+            print(f"  Response status not 'success' or invalid structure")
+            print(f"  Response: {json.dumps(result, indent=2) if isinstance(result, dict) else result}")
             return simple_fallback_analysis(filepath)
             
     except Exception as e:
-        print(f"  [ERROR] Exception in analyze_with_gradio_client: {type(e).__name__}: {e}")
+        print(f"  Gradio Client error: {e}")
         import traceback
-        print("  [ERROR] Full traceback:")
         traceback.print_exc()
         
+        # Don't retry - just use fallback
         return simple_fallback_analysis(filepath)
-    
+
 def simple_fallback_analysis(filepath):
     """Simple image analysis without ML libraries"""
     try:
