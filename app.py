@@ -20,14 +20,14 @@ import traceback
 import tempfile
 import time
 
-# Try to import gradio_client (required for HuggingFace)
+# Try to import gradio_client (but we won't actually use it on Render)
 try:
     from gradio_client import Client, file
     GRADIO_CLIENT_AVAILABLE = True
-    print("✓ gradio_client is available with file() function")
+    print("✓ gradio_client is available (but won't be used on Render due to Cloudflare issues)")
 except ImportError:
     GRADIO_CLIENT_AVAILABLE = False
-    print("⚠ gradio_client not available - INSTALL IT: pip install gradio_client")
+    print("⚠ gradio_client not available (not needed - using HTTP API)")
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
