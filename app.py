@@ -1,3 +1,4 @@
+# At the top of the file, update imports
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -16,6 +17,17 @@ from PIL import Image
 from io import BytesIO
 import random
 import traceback
+import tempfile
+import time
+
+# Try to import gradio_client (required for HuggingFace)
+try:
+    from gradio_client import Client, file
+    GRADIO_CLIENT_AVAILABLE = True
+    print("✓ gradio_client is available with file() function")
+except ImportError:
+    GRADIO_CLIENT_AVAILABLE = False
+    print("⚠ gradio_client not available - INSTALL IT: pip install gradio_client")
 
 app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'dev-key-change-in-production')
@@ -157,8 +169,55 @@ def upload_files():
     })
 
 def call_huggingface_api(image_path):
-    """Call HuggingFace Space API directly with CORRECT endpoint"""
+    """Call HuggingFace Space API using gradio_client with file() wrapper"""
     try:
+        from gradio_client import Client, file
+        
+        print(f"  📡 Calling HuggingFace using gradio_client...")
+        
+        # Create client
+        client = Client("pororoororoq/photo-analyzer")
+        
+        # Call the API using file() wrapper - THIS IS THE KEY!
+        result = client.predict(
+            file(image_path),   # IMPORTANT: wrap with file()
+            True,               # enhance_option
+            api_name="/predict"
+        )
+        
+        print(f"  ✅ HF response received!")
+        print(f"  Response type: {type(result)}")
+        
+        if isinstance(result, dict):
+            print(f"  Response keys: {list(result.keys())[:10]}")
+            return result
+        elif isinstance(result, str):
+            try:
+                parsed = json.loads(result)
+                print(f"  Parsed string response to dict")
+                return parsed
+            except:
+                print(f"  Could not parse string response")
+                return None
+        else:
+            print(f"  Unexpected response type: {type(result)}")
+            return result
+            
+    except ImportError:
+        print(f"  ❌ gradio_client not installed! Installing it...")
+        # Fallback to HTTP API if gradio_client not available
+        return call_huggingface_api_http_fallback(image_path)
+    except Exception as e:
+        print(f"  ❌ Error calling HuggingFace: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def call_huggingface_api_http_fallback(image_path):
+    """Fallback HTTP API call if gradio_client fails"""
+    try:
+        print(f"  📡 Trying HTTP API fallback...")
+        
         # Load and prepare image
         with Image.open(image_path) as img:
             img = img.convert('RGB')
@@ -173,53 +232,10 @@ def call_huggingface_api(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        # CORRECT Gradio API endpoint structure!
-        api_url = f"{HF_SPACE_URL}/gradio_api/call/predict"
+        api_url = "https://pororoororoq-photo-analyzer.hf.space/run/predict"
         
-        # Step 1: Submit the prediction request
         response = requests.post(
             api_url,
-            json={
-                "data": [
-                    f"data:image/png;base64,{img_base64}",
-                    True  # enhance_option
-                ]
-            },
-            headers={"Content-Type": "application/json"},
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            submit_result = response.json()
-            event_id = submit_result.get('event_id')
-            
-            if event_id:
-                # Step 2: Get the result using the event_id
-                result_url = f"{HF_SPACE_URL}/gradio_api/call/predict/{event_id}"
-                
-                # Poll for result (Gradio async pattern)
-                for _ in range(10):  # Try up to 10 times
-                    import time
-                    time.sleep(1)  # Wait a bit for processing
-                    
-                    result_response = requests.get(result_url, timeout=30)
-                    if result_response.status_code == 200:
-                        result = result_response.json()
-                        
-                        # Parse the result
-                        if isinstance(result, dict):
-                            if 'data' in result:
-                                actual_result = result['data'][0] if result['data'] else {}
-                            else:
-                                actual_result = result
-                            
-                            print(f"  HF Result: {json.dumps(actual_result)[:200]}")
-                            return actual_result
-        
-        # Alternative: Try the old endpoint format as fallback
-        old_api_url = f"{HF_SPACE_URL}/run/predict"
-        response = requests.post(
-            old_api_url,
             json={
                 "data": [
                     f"data:image/png;base64,{img_base64}",
@@ -227,7 +243,7 @@ def call_huggingface_api(image_path):
                 ]
             },
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout=45
         )
         
         if response.status_code == 200:
@@ -235,11 +251,11 @@ def call_huggingface_api(image_path):
             if isinstance(result, dict) and 'data' in result:
                 return result['data'][0] if result['data'] else {}
             return result
-            
+        
         return None
-            
+        
     except Exception as e:
-        print(f"  Error calling HuggingFace: {e}")
+        print(f"  HTTP fallback also failed: {e}")
         return None
 
 def analyze_photos_background(job_id, folder_path):
@@ -252,8 +268,22 @@ def analyze_photos_background(job_id, folder_path):
         print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
         print(f"HuggingFace Space: {HF_SPACE_URL}")
-        print(f"Using endpoint: {HF_SPACE_URL}/gradio_api/call/predict")
+        print(f"Using endpoint: {HF_SPACE_URL}/run/predict")
         print(f"{'='*60}")
+        
+        # Wake up HuggingFace Space if it's sleeping
+        print("Checking if HuggingFace Space is awake...")
+        try:
+            wake_response = requests.get(HF_SPACE_URL, timeout=10)
+            if wake_response.status_code == 200:
+                print("✓ HuggingFace Space is responding")
+                # Wait a bit for it to fully wake up
+                import time
+                time.sleep(2)
+            else:
+                print(f"⚠ HuggingFace Space returned {wake_response.status_code}")
+        except Exception as e:
+            print(f"⚠ Could not reach HuggingFace Space: {e}")
         
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
@@ -562,6 +592,40 @@ def cleanup_job(job_id):
     gc.collect()
     
     return jsonify({'message': 'Cleanup successful'})
+
+@app.route('/test_huggingface')
+def test_huggingface():
+    """Test HuggingFace connection with a small test image"""
+    import numpy as np
+    
+    try:
+        # Create a small test image
+        test_image = Image.new('RGB', (100, 100), color='red')
+        
+        # Save to temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            test_image.save(tmp.name)
+            tmp_path = tmp.name
+        
+        # Test the API
+        result = call_huggingface_api(tmp_path)
+        
+        # Clean up
+        os.unlink(tmp_path)
+        
+        return jsonify({
+            'status': 'success' if result else 'failed',
+            'result': result,
+            'hf_url': HF_SPACE_URL
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'hf_url': HF_SPACE_URL
+        })
 
 @app.route('/health')
 def health():
