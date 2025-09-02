@@ -206,57 +206,41 @@ def upload_files():
     })
 
 def call_huggingface_api(image_path):
-    """Call HuggingFace Space API using gradio_client with file() wrapper"""
+    """
+    Primary: HTTP /api/predict (stable).
+    Secondary: gradio_client (works locally; can be flaky on Render during wake/CF).
+    """
+    # 1) Try HTTP first
+    result = call_huggingface_api_http_fallback(image_path)
+    if result:
+        return result
+
+    # 2) If HTTP failed, try gradio_client with Space ID first, then URL
     try:
         from gradio_client import Client, file
-        
-        print("  📡 Calling HuggingFace using gradio_client…")
-        # Make sure the Space is actually ready before fetching API info
+        print("  📡 HTTP failed → trying gradio_client…")
         if not wait_for_space_ready(HF_SPACE_URL, timeout=90):
-            print("  ⚠ Space not ready after wait; falling back to HTTP")
-            return call_huggingface_api_http_fallback(image_path)
-        # Init client (try Space ID first; then URL)        
-        try:
-            client = _init_gradio_client()
-        except Exception as e:
-            print(f"  ⚠ gradio_client init failed: {e} → using HTTP fallback")
-            return call_huggingface_api_http_fallback(image_path)
-        # Prefer full URL; pass token if the Space is gated
-        
-        # Call the API using file() wrapper - THIS IS THE KEY!
-        result = client.predict(
-            file(image_path),   # IMPORTANT: wrap with file()
-            True,               # enhance_option
-            api_name="/predict"
-        )
-        
-        print(f"  ✅ HF response received!")
-        print(f"  Response type: {type(result)}")
-        
-        if isinstance(result, dict):
-            print(f"  Response keys: {list(result.keys())[:10]}")
-            return result
-        elif isinstance(result, str):
+            print("  ⚠ Space not ready; skipping gradio_client")
+            return None
+        for label, target in (("id", HF_SPACE_ID), ("url", HF_SPACE_URL)):
             try:
-                parsed = json.loads(result)
-                print(f"  Parsed string response to dict")
-                return parsed
-            except:
-                print(f"  Could not parse string response")
-                return None
-        else:
-            print(f"  Unexpected response type: {type(result)}")
-            return result
-            
+                print(f"[gradio_client] init via {label}: {target}")
+                client = Client(target, hf_token=HF_TOKEN)
+                out = client.predict(file(image_path), True, api_name="/predict")
+                print("  ✅ gradio_client response received")
+                if isinstance(out, str):
+                    try:
+                        out = json.loads(out)
+                    except Exception:
+                        pass
+                return out
+            except Exception as e:
+                print(f"[gradio_client] init failed ({label}): {e}")
+                time.sleep(2)
+        return None
     except ImportError:
-        print(f"  ❌ gradio_client not installed! Installing it...")
-        # Fallback to HTTP API if gradio_client not available
-        return call_huggingface_api_http_fallback(image_path)
-    except Exception as e:
-        print(f"  ❌ Error calling HuggingFace: {e}")
-        import traceback
-        traceback.print_exc()
-        return call_huggingface_api_http_fallback(image_path)
+        print("  ❌ gradio_client not installed; no secondary path available")
+        return None
 
 def call_huggingface_api_http_fallback(image_path):
     """Fallback HTTP API call if gradio_client fails"""
