@@ -58,20 +58,42 @@ processing_jobs = {}
 # HuggingFace Space config
 # (make these env vars in Render for easy swaps)
 HF_SPACE_URL = os.getenv('HF_SPACE_URL', 'https://pororoororoq-photo-analyzer.hf.space')
+HF_SPACE_ID  = os.getenv('HF_SPACE_ID',  'pororoororoq/photo-analyzer')
 HF_TOKEN = os.getenv('HF_TOKEN')  # only needed if your Space is gated/private
 
-def wait_for_space_ready(base_url, timeout=60):
-    """Poll the Space until it returns JSON from /config (avoids JSONDecodeError during cold starts)."""
+def wait_for_space_ready(base_url, timeout=90):
+    """Poll /config until JSON is returned to avoid JSONDecodeError on cold starts."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             r = requests.get(f"{base_url}/config", timeout=8)
-            if r.ok and "application/json" in r.headers.get("content-type", ""):
+            ct = r.headers.get("content-type","")
+            if r.ok and "application/json" in ct and r.text.strip().startswith("{"):
                 return True
-        except Exception:
-            pass
+            else:
+                print(f"[HF readiness] {r.status_code} ct={ct} body[:80]={r.text[:80]!r}")
+        except Exception as e:
+            print(f"[HF readiness] error: {e}")
         time.sleep(2)
     return False
+
+def _init_gradio_client():
+    """
+    Try to init the gradio client using the Space ID first (more reliable),
+    then fall back to full URL. Return a Client or raise the last exception.
+    """
+    from gradio_client import Client
+    last_exc = None
+    for label, target in (("id", HF_SPACE_ID), ("url", HF_SPACE_URL)):
+        try:
+            print(f"[gradio_client] init via {label}: {target}")
+            c = Client(target, hf_token=HF_TOKEN)
+            return c
+        except Exception as e:
+            print(f"[gradio_client] init failed ({label}): {e}")
+            last_exc = e
+            time.sleep(2)
+    raise last_exc
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -193,9 +215,13 @@ def call_huggingface_api(image_path):
         if not wait_for_space_ready(HF_SPACE_URL, timeout=90):
             print("  ⚠ Space not ready after wait; falling back to HTTP")
             return call_huggingface_api_http_fallback(image_path)
-
+        # Init client (try Space ID first; then URL)        
+        try:
+            client = _init_gradio_client()
+        except Exception as e:
+            print(f"  ⚠ gradio_client init failed: {e} → using HTTP fallback")
+            return call_huggingface_api_http_fallback(image_path)
         # Prefer full URL; pass token if the Space is gated
-        client = Client(HF_SPACE_URL, hf_token=HF_TOKEN)
         
         # Call the API using file() wrapper - THIS IS THE KEY!
         result = client.predict(
@@ -230,7 +256,7 @@ def call_huggingface_api(image_path):
         print(f"  ❌ Error calling HuggingFace: {e}")
         import traceback
         traceback.print_exc()
-        return None
+        return call_huggingface_api_http_fallback(image_path)
 
 def call_huggingface_api_http_fallback(image_path):
     """Fallback HTTP API call if gradio_client fails"""
@@ -251,7 +277,7 @@ def call_huggingface_api_http_fallback(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        api_url = "https://pororoororoq-photo-analyzer.hf.space/api/predict"
+        api_url = f"{HF_SPACE_URL}/api/predict"
         
         response = requests.post(
             api_url,
