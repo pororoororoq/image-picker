@@ -55,8 +55,23 @@ for folder in [app.config['UPLOAD_FOLDER'], app.config['RESULTS_FOLDER']]:
 # Global processing queue
 processing_jobs = {}
 
-# HuggingFace Space URL - CORRECT ENDPOINT!
-HF_SPACE_URL = 'https://pororoororoq-photo-analyzer.hf.space'
+# HuggingFace Space config
+# (make these env vars in Render for easy swaps)
+HF_SPACE_URL = os.getenv('HF_SPACE_URL', 'https://pororoororoq-photo-analyzer.hf.space')
+HF_TOKEN = os.getenv('HF_TOKEN')  # only needed if your Space is gated/private
+
+def wait_for_space_ready(base_url, timeout=60):
+    """Poll the Space until it returns JSON from /config (avoids JSONDecodeError during cold starts)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            r = requests.get(f"{base_url}/config", timeout=8)
+            if r.ok and "application/json" in r.headers.get("content-type", ""):
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+    return False
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -173,10 +188,14 @@ def call_huggingface_api(image_path):
     try:
         from gradio_client import Client, file
         
-        print(f"  📡 Calling HuggingFace using gradio_client...")
-        
-        # Create client
-        client = Client("pororoororoq/photo-analyzer")
+        print("  📡 Calling HuggingFace using gradio_client…")
+        # Make sure the Space is actually ready before fetching API info
+        if not wait_for_space_ready(HF_SPACE_URL, timeout=90):
+            print("  ⚠ Space not ready after wait; falling back to HTTP")
+            return call_huggingface_api_http_fallback(image_path)
+
+        # Prefer full URL; pass token if the Space is gated
+        client = Client(HF_SPACE_URL, hf_token=HF_TOKEN)
         
         # Call the API using file() wrapper - THIS IS THE KEY!
         result = client.predict(
@@ -232,7 +251,7 @@ def call_huggingface_api_http_fallback(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        api_url = "https://pororoororoq-photo-analyzer.hf.space/run/predict"
+        api_url = "https://pororoororoq-photo-analyzer.hf.space/api/predict"
         
         response = requests.post(
             api_url,
@@ -245,7 +264,7 @@ def call_huggingface_api_http_fallback(image_path):
             headers={"Content-Type": "application/json"},
             timeout=45
         )
-        
+        print(f"[HTTP fallback] {response.status_code} {response.text[:300]}")
         if response.status_code == 200:
             result = response.json()
             if isinstance(result, dict) and 'data' in result:
@@ -268,7 +287,7 @@ def analyze_photos_background(job_id, folder_path):
         print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
         print(f"HuggingFace Space: {HF_SPACE_URL}")
-        print(f"Using endpoint: {HF_SPACE_URL}/run/predict")
+        print(f"Using endpoint: {HF_SPACE_URL}/api/predict")
         print(f"{'='*60}")
         
         # Wake up HuggingFace Space if it's sleeping
@@ -376,7 +395,7 @@ def analyze_photos_background(job_id, folder_path):
             
             # Clean up memory
             gc.collect()
-        
+            job.processed_files = i + 1
         # Update final status
         job.processed_files = total_files
         job.results = results
