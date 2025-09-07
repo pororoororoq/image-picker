@@ -22,7 +22,7 @@ import time
 
 # Try to import gradio_client (but we won't actually use it on Render)
 try:
-    from gradio_client import Client, file
+    from gradio_client import Client, handle_file
     GRADIO_CLIENT_AVAILABLE = True
     print("✓ gradio_client is available (but won't be used on Render due to Cloudflare issues)")
 except ImportError:
@@ -171,16 +171,35 @@ def upload_files():
 def call_huggingface_api(image_path):
     """Call HuggingFace Space API using gradio_client with file() wrapper"""
     try:
-        from gradio_client import Client, file
+        from gradio_client import Client, handle_file
         
         print(f"  📡 Calling HuggingFace using gradio_client...")
+
+        # Warm-up + retry to avoid cold-start JSON decode errors
+        import time, requests, os
+        SPACE_URL = HF_SPACE_URL  # use full URL
+        last_err = None
+        for _try in range(3):
+            try:
+                try:
+                    requests.get(SPACE_URL, timeout=10)  # wake Space
+                except Exception as _e:
+                    pass
+                client = Client(SPACE_URL, hf_token=os.environ.get('HF_TOKEN'))
+                _ = client.view_api(return_format='dict')
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(2)
+        else:
+            raise last_err if last_err else RuntimeError('Failed to initialize gradio Client')
         
         # Create client
-        client = Client("pororoororoq/photo-analyzer")
+        # client initialized with SPACE_URL above (with retries)
         
         # Call the API using file() wrapper - THIS IS THE KEY!
         result = client.predict(
-            file(image_path),   # IMPORTANT: wrap with file()
+            handle_file(image_path),   # IMPORTANT: wrap with file()
             True,               # enhance_option
             api_name="/predict"
         )
@@ -232,7 +251,7 @@ def call_huggingface_api_http_fallback(image_path):
             img.save(buffered, format="PNG", optimize=True)
             img_base64 = base64.b64encode(buffered.getvalue()).decode()
         
-        api_url = "https://pororoororoq-photo-analyzer.hf.space/run/predict"
+        api_url = "https://pororoororoq-photo-analyzer.hf.space/api/predict"
         
         response = requests.post(
             api_url,
@@ -268,7 +287,7 @@ def analyze_photos_background(job_id, folder_path):
         print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
         print(f"HuggingFace Space: {HF_SPACE_URL}")
-        print(f"Using endpoint: {HF_SPACE_URL}/run/predict")
+        print(f"Using endpoint: {HF_SPACE_URL}/api/predict")
         print(f"{'='*60}")
         
         # Wake up HuggingFace Space if it's sleeping
