@@ -684,6 +684,8 @@
                     ? '<span class="ml-source-badge ml-local">Local</span>'
                     : '';
 
+                const displayBlurScore = Math.min(10, photo.blur_score / 15);
+
                 const card = document.createElement('div');
                 card.className = `photo-card ${selectedPhotos.has(photo.filename) ? 'selected' : ''}`;
                 card.innerHTML = `
@@ -691,7 +693,7 @@
                     <div class="photo-info">
                         <div class="photo-filename" title="${photo.filename}">${photo.filename}</div>
                         <div class="photo-scores">
-                            <span>Blur: <span class="score-badge ${getBlurScoreClass(photo.blur_score)}">${photo.blur_score.toFixed(0)}</span></span>
+                            <span>Blur: <span class="score-badge ${getBlurScoreClass(photo.blur_score)}">${displayBlurScore.toFixed(1)}/10</span></span>
                             <span>Aesthetic: <span class="score-badge">${photo.aesthetic_score.toFixed(1)}/10</span></span>
                         </div>
                         <div class="photo-scores">
