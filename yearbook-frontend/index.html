@@ -137,13 +137,24 @@
             display: none;
         }
 
+        .progress-container {
+            margin-bottom: 25px;
+        }
+
+        .progress-label {
+            font-size: 16px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 8px;
+        }
+
         .progress-bar {
             width: 100%;
             height: 30px;
             background: #e2e8f0;
             border-radius: 15px;
             overflow: hidden;
-            margin: 20px 0;
+            position: relative;
         }
 
         .progress-fill {
@@ -155,6 +166,29 @@
             justify-content: center;
             color: white;
             font-weight: bold;
+            position: relative;
+        }
+
+        .progress-fill.upload {
+            background: linear-gradient(90deg, #48bb78, #38a169);
+        }
+
+        .progress-fill.analysis {
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .progress-text {
+            margin-top: 10px;
+            text-align: center;
+            color: #718096;
+            font-size: 14px;
+        }
+
+        .progress-separator {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 20px;
+            color: #a0aec0;
         }
 
         .results-section {
@@ -358,6 +392,13 @@
         
         .ml-hf { background: #9f7aea; color: white; }
         .ml-local { background: #f6ad55; color: white; }
+
+        .checkmark {
+            color: #48bb78;
+            font-size: 24px;
+            margin-left: 10px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -395,13 +436,35 @@
             </div>
         </div>
 
-        <!-- Progress Section -->
+        <!-- Progress Section with Dual Progress Bars -->
         <div class="progress-section" id="progressSection">
-            <h2>Analyzing Photos...</h2>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill">0%</div>
+            <h2 style="margin-bottom: 25px;">Processing Your Photos</h2>
+            
+            <!-- Upload Progress -->
+            <div class="progress-container" id="uploadProgressContainer">
+                <div class="progress-label">
+                    📤 Upload Progress
+                    <span class="checkmark" id="uploadCheckmark">✓</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill upload" id="uploadProgressFill">0%</div>
+                </div>
+                <div class="progress-text" id="uploadProgressText">Preparing upload...</div>
             </div>
-            <p id="progressText">Processing image 0 of 0...</p>
+
+            <div class="progress-separator">↓</div>
+
+            <!-- Analysis Progress -->
+            <div class="progress-container" id="analysisProgressContainer">
+                <div class="progress-label">
+                    🔍 Analysis Progress
+                    <span class="checkmark" id="analysisCheckmark">✓</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill analysis" id="analysisProgressFill">0%</div>
+                </div>
+                <div class="progress-text" id="analysisProgressText">Waiting for upload to complete...</div>
+            </div>
         </div>
 
         <!-- Results Section -->
@@ -465,6 +528,7 @@
         let currentResults = [];
         let selectedPhotos = new Set();
         let currentFilter = 'all';
+        let pollInterval = null;
 
         // Check for API URL on load
         window.addEventListener('DOMContentLoaded', () => {
@@ -547,100 +611,133 @@
             handleFiles(e.dataTransfer.files);
         });
 
-        // Handle file upload
+        // Handle file upload with separate progress bars
+        async function handleFiles(files) {
+            if (files.length === 0) return;
 
-       async function handleFiles(files) {
-    if (files.length === 0) return;
+            const MAX_CHUNK_BYTES = 100 * 1024 * 1024; // 100 MB per chunk
+            let totalBytes = Array.from(files).reduce((acc, f) => acc + f.size, 0);
+            let uploadedBytes = 0;
 
-    const MAX_CHUNK_BYTES = 100 * 1024 * 1024; // 100 MB per chunk
-    let totalBytes = Array.from(files).reduce((acc, f) => acc + f.size, 0);
-    let uploadedBytes = 0;
+            // Hide upload section and show progress bars
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'block';
+            
+            // Reset progress bars
+            resetProgressBars();
+            hideError();
 
-    // Hide upload section and show progress bar
-    document.getElementById('uploadSection').style.display = 'none';
-    document.getElementById('progressSection').style.display = 'block';
-    document.getElementById('progressFill').style.width = '0%';
-    document.getElementById('progressFill').textContent = '0%';
-    document.getElementById('progressText').textContent = `Uploading 0%`;
-    hideError();
+            // Split files into smaller batches that total under 100 MB each
+            const chunks = [];
+            let currentChunk = [];
+            let currentSize = 0;
 
-    // Split files into smaller batches that total under 100 MB each
-    const chunks = [];
-    let currentChunk = [];
-    let currentSize = 0;
+            for (let file of files) {
+                if (currentSize + file.size > MAX_CHUNK_BYTES && currentChunk.length > 0) {
+                    chunks.push(currentChunk);
+                    currentChunk = [];
+                    currentSize = 0;
+                }
+                currentChunk.push(file);
+                currentSize += file.size;
+            }
+            if (currentChunk.length > 0) chunks.push(currentChunk);
 
-    for (let file of files) {
-        if (currentSize + file.size > MAX_CHUNK_BYTES && currentChunk.length > 0) {
-            chunks.push(currentChunk);
-            currentChunk = [];
-            currentSize = 0;
-        }
-        currentChunk.push(file);
-        currentSize += file.size;
-    }
-    if (currentChunk.length > 0) chunks.push(currentChunk);
+            console.log(`Uploading ${chunks.length} chunks...`);
+            let jobId = null;
 
-    console.log(`Uploading ${chunks.length} chunks...`);
-    let jobId = null;
+            // Update upload progress text
+            document.getElementById('uploadProgressText').textContent = `Uploading ${files.length} files in ${chunks.length} batch${chunks.length > 1 ? 'es' : ''}...`;
 
-    // Sequentially upload each chunk
-    for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        const formData = new FormData();
-        for (let file of chunk) {
-            formData.append('files[]', file);
-        }
+            // Sequentially upload each chunk
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                const formData = new FormData();
+                for (let file of chunk) {
+                    formData.append('files[]', file);
+                }
 
-        try {
-            // Use job_id on subsequent chunks
-            const url = i === 0
-                ? `${API_URL}/upload`
-                : `${API_URL}/upload?job_id=${jobId}`;
+                try {
+                    // Use job_id on subsequent chunks
+                    const url = i === 0
+                        ? `${API_URL}/upload`
+                        : `${API_URL}/upload?job_id=${jobId}`;
 
-            const response = await fetch(url, {
-                method: 'POST',
-                body: formData,
-                mode: 'cors'
-            });
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        body: formData,
+                        mode: 'cors'
+                    });
 
-            if (!response.ok) {
-                throw new Error(`Chunk ${i + 1} failed (${response.status})`);
+                    if (!response.ok) {
+                        throw new Error(`Chunk ${i + 1} failed (${response.status})`);
+                    }
+
+                    const data = await response.json();
+
+                    // Save job_id from the first chunk
+                    if (i === 0 && data.job_id) {
+                        jobId = data.job_id;
+                        currentJobId = jobId;
+                        console.log(`Assigned job_id: ${jobId}`);
+                    }
+
+                    // Update upload progress bar
+                    uploadedBytes += chunk.reduce((acc, f) => acc + f.size, 0);
+                    const percent = Math.min(100, Math.round((uploadedBytes / totalBytes) * 100));
+                    updateUploadProgress(percent, i + 1, chunks.length);
+
+                } catch (error) {
+                    console.error('Upload chunk error:', error);
+                    showError(`Chunk ${i + 1} failed: ${error.message}`);
+                    return;
+                }
             }
 
-            const data = await response.json();
-
-            // Save job_id from the first chunk
-            if (i === 0 && data.job_id) {
-                jobId = data.job_id;
-                currentJobId = jobId;
-                console.log(`Assigned job_id: ${jobId}`);
-            }
-
-            // Update progress bar
-            uploadedBytes += chunk.reduce((acc, f) => acc + f.size, 0);
-            const percent = Math.min(100, Math.round((uploadedBytes / totalBytes) * 100));
-            document.getElementById('progressFill').style.width = `${percent}%`;
-            document.getElementById('progressFill').textContent = `${percent}%`;
-            document.getElementById('progressText').textContent =
-                `Uploaded ${i + 1} of ${chunks.length} batches (${percent}%)`;
-
-        } catch (error) {
-            console.error('Upload chunk error:', error);
-            showError(`Chunk ${i + 1} failed: ${error.message}`);
-            return;
+            // Mark upload as complete
+            completeUploadProgress();
+            
+            // Start analysis polling
+            startAnalysisPolling();
         }
-    }
 
-    showSuccess('All chunks uploaded. Starting analysis...');
-    document.getElementById('progressText').textContent = 'Starting analysis...';
+        // Reset both progress bars
+        function resetProgressBars() {
+            // Reset upload progress
+            document.getElementById('uploadProgressFill').style.width = '0%';
+            document.getElementById('uploadProgressFill').textContent = '0%';
+            document.getElementById('uploadProgressText').textContent = 'Preparing upload...';
+            document.getElementById('uploadCheckmark').style.display = 'none';
+            
+            // Reset analysis progress
+            document.getElementById('analysisProgressFill').style.width = '0%';
+            document.getElementById('analysisProgressFill').textContent = '0%';
+            document.getElementById('analysisProgressText').textContent = 'Waiting for upload to complete...';
+            document.getElementById('analysisCheckmark').style.display = 'none';
+        }
 
-    // Start polling backend for analysis progress
-    startPolling();
-}
+        // Update upload progress bar
+        function updateUploadProgress(percent, currentChunk, totalChunks) {
+            document.getElementById('uploadProgressFill').style.width = `${percent}%`;
+            document.getElementById('uploadProgressFill').textContent = `${percent}%`;
+            document.getElementById('uploadProgressText').textContent = 
+                `Uploaded batch ${currentChunk} of ${totalChunks} (${percent}%)`;
+        }
 
-        // Poll for job status and update progress bar
-        function startPolling() {
-            const pollInterval = setInterval(async () => {
+        // Mark upload as complete
+        function completeUploadProgress() {
+            document.getElementById('uploadProgressFill').style.width = '100%';
+            document.getElementById('uploadProgressFill').textContent = '100%';
+            document.getElementById('uploadProgressText').textContent = 'Upload complete!';
+            document.getElementById('uploadCheckmark').style.display = 'inline';
+            showSuccess('All files uploaded successfully. Starting analysis...');
+        }
+
+        // Start polling for analysis progress
+        function startAnalysisPolling() {
+            document.getElementById('analysisProgressText').textContent = 'Starting analysis...';
+            
+            pollInterval = setInterval(async () => {
                 try {
                     const response = await fetch(`${API_URL}/status/${currentJobId}`, {
                         mode: 'cors'
@@ -652,15 +749,19 @@
 
                     const data = await response.json();
 
-                    // Update progress display
+                    // Update analysis progress
                     const progress = Math.round(data.progress || 0);
-                    document.getElementById('progressFill').style.width = `${progress}%`;
-                    document.getElementById('progressFill').textContent = `${progress}%`;
-                    document.getElementById('progressText').textContent =
-                        `Processing image ${data.processed_files} of ${data.total_files}...`;
+                    document.getElementById('analysisProgressFill').style.width = `${progress}%`;
+                    document.getElementById('analysisProgressFill').textContent = `${progress}%`;
+                    
+                    if (data.processed_files !== undefined && data.total_files !== undefined) {
+                        document.getElementById('analysisProgressText').textContent =
+                            `Analyzing image ${data.processed_files} of ${data.total_files}...`;
+                    }
 
                     if (data.status === 'completed') {
                         clearInterval(pollInterval);
+                        completeAnalysisProgress();
                         loadResults();
                     } else if (data.status === 'error') {
                         clearInterval(pollInterval);
@@ -673,6 +774,14 @@
                     showError('Lost connection to backend. Please refresh and try again.');
                 }
             }, 1000); // check every 1 second
+        }
+
+        // Mark analysis as complete
+        function completeAnalysisProgress() {
+            document.getElementById('analysisProgressFill').style.width = '100%';
+            document.getElementById('analysisProgressFill').textContent = '100%';
+            document.getElementById('analysisProgressText').textContent = 'Analysis complete!';
+            document.getElementById('analysisCheckmark').style.display = 'inline';
         }
 
         // Load and display results
@@ -700,12 +809,14 @@
                 // Display photos
                 displayPhotos();
 
-                // Show results section
-                document.getElementById('progressSection').style.display = 'none';
-                document.getElementById('resultsSection').style.display = 'block';
-                document.getElementById('actionBar').style.display = 'flex';
+                // Show results section, hide progress
+                setTimeout(() => {
+                    document.getElementById('progressSection').style.display = 'none';
+                    document.getElementById('resultsSection').style.display = 'block';
+                    document.getElementById('actionBar').style.display = 'flex';
+                }, 1000); // Brief delay to show completed state
                 
-                showSuccess('Analysis complete!');
+                showSuccess('Analysis complete! Your photos are ready for review.');
 
             } catch (error) {
                 console.error('Error loading results:', error);
@@ -841,14 +952,24 @@
 
         // Reset everything
         function resetAll() {
+            // Clear any polling intervals
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            
+            // Clean up backend
             if (currentJobId) {
                 fetch(`${API_URL}/cleanup/${currentJobId}`, {method: 'DELETE', mode: 'cors'});
             }
+            
+            // Reset state
             currentJobId = null;
             currentResults = [];
             selectedPhotos.clear();
             currentFilter = 'all';
             
+            // Reset UI
             document.getElementById('uploadSection').style.display = 'block';
             document.getElementById('progressSection').style.display = 'none';
             document.getElementById('resultsSection').style.display = 'none';
