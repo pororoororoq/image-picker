@@ -209,9 +209,25 @@ def upload_files():
         elif total_files and len(all_files) >= int(total_files):
             should_start = True
             print(f"All expected files uploaded ({len(all_files)}/{total_files})")
-        elif not total_files and len(all_files) > 0 and len(uploaded_files) < 5:
-            should_start = True
-            print(f"Small upload detected, assuming final chunk")
+        elif not total_files:
+            # No total_files specified - use different logic
+            if len(uploaded_files) < 10 and len(all_files) == len(uploaded_files):
+                # First and only chunk
+                should_start = True
+                print(f"Single chunk upload detected - starting analysis")
+            elif len(all_files) > 0 and len(uploaded_files) < 5:
+                # Small chunk, might be last
+                should_start = True
+                print(f"Small chunk detected - starting analysis")
+        
+        # Additional failsafe: if we have files but no total_files after 2 seconds, start anyway
+        if not should_start and not total_files and len(all_files) > 0:
+            print(f"WARNING: No total_files specified but {len(all_files)} files uploaded")
+            print(f"Consider starting analysis manually with /start_analysis/{job_id}")
+            # For now, let's start it anyway if this looks like a complete upload
+            if len(uploaded_files) == len(all_files):
+                should_start = True
+                print(f"Assuming this is a complete upload - starting analysis")
         
         if should_start:
             # Check if already processing
