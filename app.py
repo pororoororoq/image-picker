@@ -159,7 +159,9 @@ def upload_files():
             save_path = os.path.join(job_dir, filename)
             file.save(save_path)
             saved_files.append(filename)
-            update_progress(job_dir, i + 1, len(filename))
+
+        # Track upload progress per chunk (not analysis yet)
+        update_progress(job_dir, len(saved_files), len(uploaded_files))
 
         # if this is the first chunk, you can initialize metadata
         if is_new_job:
@@ -176,6 +178,29 @@ def upload_files():
 
     except Exception as e:
         print("Upload error:", e)
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/complete/<job_id>", methods=["POST"])
+def mark_complete(job_id):
+    """Marks a job as fully processed (analysis complete)."""
+    try:
+        job_dir = os.path.join(UPLOAD_DIR, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        status_file = os.path.join(job_dir, "status.json")
+
+        # ✅ Write final completion state
+        with open(status_file, "w") as f:
+            json.dump({
+                "status": "completed",
+                "progress": 100,
+                "processed_files": len(os.listdir(job_dir)),
+                "total_files": len(os.listdir(job_dir))
+            }, f)
+
+        return jsonify({"message": f"Job {job_id} marked as completed"}), 200
+
+    except Exception as e:
+        print("Completion error:", e)
         return jsonify({"error": str(e)}), 500
 
 import json
@@ -341,8 +366,6 @@ def analyze_photos_background(job_id, folder_path):
             wake_response = requests.get(HF_SPACE_URL, timeout=10)
             if wake_response.status_code == 200:
                 print("✓ HuggingFace Space is responding")
-                # Wait a bit for it to fully wake up
-                import time
                 time.sleep(2)
             else:
                 print(f"⚠ HuggingFace Space returned {wake_response.status_code}")
@@ -352,23 +375,24 @@ def analyze_photos_background(job_id, folder_path):
         # Get list of images
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
         files = [f for f in os.listdir(folder_path) 
-                if os.path.splitext(f)[1].lower() in image_extensions]
+                 if os.path.splitext(f)[1].lower() in image_extensions]
         
         total_files = len(files)
         job.total_files = total_files
         job.status = 'processing'
-        
         results = {}
         
-        # Process each file
         for i, filename in enumerate(files):
             filepath = os.path.join(folder_path, filename)
             print(f"\n[{i+1}/{total_files}] Processing: {filename}")
-            
-            # Update job progress
-            job.processed_files = i
+
+            # Update job progress (memory)
+            job.processed_files = i + 1
             job.current_file = filename
-            
+
+            # 🔹 Write progress to status.json so frontend sees it
+            update_progress(folder_path, i + 1, total_files)
+
             try:
                 # Call HuggingFace API
                 hf_result = call_huggingface_api(filepath)
@@ -378,7 +402,6 @@ def analyze_photos_background(job_id, folder_path):
                     scores = hf_result.get('scores', {})
                     analysis = hf_result.get('analysis', {})
                     
-                    # Check if scores are at root level
                     if not scores:
                         if 'aesthetic_score' in hf_result:
                             scores = {
@@ -396,7 +419,7 @@ def analyze_photos_background(job_id, folder_path):
                                 'face_detected': hf_result.get('face_detected', False)
                             }
                     
-                    if scores:  # We got valid scores from HuggingFace
+                    if scores:
                         results[filepath] = {
                             'filename': filename,
                             'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
@@ -415,14 +438,12 @@ def analyze_photos_background(job_id, folder_path):
                               f"B:{results[filepath]['blur_score']:.0f}, "
                               f"C:{results[filepath]['composition_score']:.1f}")
                     else:
-                        # Fallback if HuggingFace didn't return proper scores
                         results[filepath] = simple_fallback_analysis(filepath, filename)
-                        print(f"  → Using fallback (no valid HF scores)")
+                        print("  → Using fallback (no valid HF scores)")
                 else:
-                    # Use fallback if HuggingFace failed
                     results[filepath] = simple_fallback_analysis(filepath, filename)
-                    print(f"  → Using fallback (HF call failed)")
-                
+                    print("  → Using fallback (HF call failed)")
+            
             except Exception as e:
                 print(f"  ✗ Error: {e}")
                 results[filepath] = {
@@ -438,28 +459,34 @@ def analyze_photos_background(job_id, folder_path):
                     'ml_source': 'error'
                 }
             
-            # Clean up memory
+            # Free memory
             gc.collect()
         
-        # Update final status
+        # ✅ After all files processed, mark job as completed (both memory + file)
         job.processed_files = total_files
         job.results = results
         job.status = 'completed'
-        
-        # Save results to file
+
+        with open(os.path.join(folder_path, "status.json"), "w") as f:
+            json.dump({
+                "status": "completed",
+                "progress": 100,
+                "processed_files": total_files,
+                "total_files": total_files
+            }, f)
+
+        # Save results to JSON
         results_file = os.path.join(app.config['RESULTS_FOLDER'], f"{job_id}.json")
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
-        
+
         print(f"\n{'='*60}")
-        print(f"Job {job_id} completed!")
-        
-        # Print summary
+        print(f"Job {job_id} completed successfully!")
         hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface')
-        fallback_count = sum(1 for r in results.values() if 'fallback' in r.get('ml_source', ''))
+        fallback_count = sum(1 for r in results.values() if r.get('ml_source') == 'fallback')
         print(f"Summary: {hf_count} via HuggingFace, {fallback_count} via fallback")
         print(f"{'='*60}\n")
-        
+
     except Exception as e:
         print(f"Fatal error in job {job_id}: {e}")
         traceback.print_exc()
