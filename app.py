@@ -117,56 +117,53 @@ def index():
         }
     })
 
-@app.route('/upload', methods=['POST'])
+UPLOAD_DIR = "uploads"
+
+@app.route("/upload", methods=["POST"])
 def upload_files():
-    """Handle file uploads and start analysis"""
-    if 'files[]' not in request.files:
-        return jsonify({'error': 'No files provided'}), 400
-    
-    files = request.files.getlist('files[]')
-    
-    # Filter valid files
-    valid_files = []
-    for file in files:
-        if file and allowed_file(file.filename):
-            valid_files.append(file)
-    
-    if not valid_files:
-        return jsonify({'error': 'No valid image files provided'}), 400
-    
-    # Limit files to prevent memory issues
-    if len(valid_files) > 30:
-        return jsonify({'error': 'Too many files. Please upload 30 or fewer images at once.'}), 400
-    
-    # Create unique job ID
-    job_id = str(uuid.uuid4())
-    
-    # Create job folder
-    job_folder = os.path.join(app.config['UPLOAD_FOLDER'], job_id)
-    os.makedirs(job_folder, exist_ok=True)
-    
-    # Save files
-    saved_files = []
-    for file in valid_files:
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(job_folder, filename)
-        file.save(filepath)
-        saved_files.append(filepath)
-    
-    # Create job object
-    job = AnalysisJob(job_id, len(saved_files))
-    processing_jobs[job_id] = job
-    
-    # Start analysis in background thread
-    thread = threading.Thread(target=analyze_photos_background, args=(job_id, job_folder))
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({
-        'job_id': job_id,
-        'message': f'Analysis started for {len(saved_files)} images',
-        'total_files': len(saved_files)
-    })
+    """
+    Accepts chunked uploads.
+    Each request may contain a subset of files belonging to the same job_id.
+    The first request (no job_id) creates a new job folder.
+    Subsequent requests append more files to that folder.
+    """
+    try:
+        # job_id passed as query param for subsequent chunks
+        job_id = request.args.get("job_id")
+        is_new_job = False
+        if not job_id:
+            job_id = str(uuid.uuid4())
+            is_new_job = True
+
+        job_dir = os.path.join(UPLOAD_DIR, job_id)
+        os.makedirs(job_dir, exist_ok=True)
+
+        # get files from the current chunk
+        uploaded_files = request.files.getlist("files[]")
+        saved_files = []
+
+        for file in uploaded_files:
+            filename = secure_filename(file.filename)
+            save_path = os.path.join(job_dir, filename)
+            file.save(save_path)
+            saved_files.append(filename)
+
+        # if this is the first chunk, you can initialize metadata
+        if is_new_job:
+            # create a simple status tracker file
+            with open(os.path.join(job_dir, "meta.txt"), "w") as f:
+                f.write("initialized")
+
+        # ✅ Return same job_id for all chunks
+        return jsonify({
+            "job_id": job_id,
+            "saved": len(saved_files),
+            "message": f"Received {len(saved_files)} files for job {job_id}"
+        }), 200
+
+    except Exception as e:
+        print("Upload error:", e)
+        return jsonify({"error": str(e)}), 500
 
 def call_huggingface_api(image_path):
     """Call HuggingFace Space API using gradio_client with file() wrapper"""

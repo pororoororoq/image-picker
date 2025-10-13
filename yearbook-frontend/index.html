@@ -549,77 +549,94 @@
 
         // Handle file upload
 
-        async function handleFiles(files) {
-            if (files.length === 0) return;
+       async function handleFiles(files) {
+    if (files.length === 0) return;
 
-            const formData = new FormData();
-            for (let file of files) {
-                formData.append('files[]', file);
+    const MAX_CHUNK_BYTES = 100 * 1024 * 1024; // 100 MB per chunk
+    let totalBytes = Array.from(files).reduce((acc, f) => acc + f.size, 0);
+    let uploadedBytes = 0;
+
+    // Hide upload section and show progress bar
+    document.getElementById('uploadSection').style.display = 'none';
+    document.getElementById('progressSection').style.display = 'block';
+    document.getElementById('progressFill').style.width = '0%';
+    document.getElementById('progressFill').textContent = '0%';
+    document.getElementById('progressText').textContent = `Uploading 0%`;
+    hideError();
+
+    // Split files into smaller batches that total under 100 MB each
+    const chunks = [];
+    let currentChunk = [];
+    let currentSize = 0;
+
+    for (let file of files) {
+        if (currentSize + file.size > MAX_CHUNK_BYTES && currentChunk.length > 0) {
+            chunks.push(currentChunk);
+            currentChunk = [];
+            currentSize = 0;
+        }
+        currentChunk.push(file);
+        currentSize += file.size;
+    }
+    if (currentChunk.length > 0) chunks.push(currentChunk);
+
+    console.log(`Uploading ${chunks.length} chunks...`);
+    let jobId = null;
+
+    // Sequentially upload each chunk
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const formData = new FormData();
+        for (let file of chunk) {
+            formData.append('files[]', file);
+        }
+
+        try {
+            // Use job_id on subsequent chunks
+            const url = i === 0
+                ? `${API_URL}/upload`
+                : `${API_URL}/upload?job_id=${jobId}`;
+
+            const response = await fetch(url, {
+                method: 'POST',
+                body: formData,
+                mode: 'cors'
+            });
+
+            if (!response.ok) {
+                throw new Error(`Chunk ${i + 1} failed (${response.status})`);
             }
 
-            // Hide upload section and show progress bar
-            document.getElementById('uploadSection').style.display = 'none';
-            document.getElementById('progressSection').style.display = 'block';
-            document.getElementById('progressFill').style.width = '0%';
-            document.getElementById('progressFill').textContent = '0%';
-            document.getElementById('progressText').textContent = `Uploading 0%`;
-            hideError();
+            const data = await response.json();
 
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', `${API_URL}/upload`, true);
+            // Save job_id from the first chunk
+            if (i === 0 && data.job_id) {
+                jobId = data.job_id;
+                currentJobId = jobId;
+                console.log(`Assigned job_id: ${jobId}`);
+            }
 
-            // Track upload progress
-            xhr.upload.onprogress = function (e) {
-                if (e.lengthComputable) {
-                    const percent = Math.round((e.loaded / e.total) * 100);
-                    document.getElementById('progressFill').style.width = `${percent}%`;
-                    document.getElementById('progressFill').textContent = `${percent}%`;
-                    document.getElementById('progressText').textContent = `Uploading ${percent}%`;
-                }
-            };
+            // Update progress bar
+            uploadedBytes += chunk.reduce((acc, f) => acc + f.size, 0);
+            const percent = Math.min(100, Math.round((uploadedBytes / totalBytes) * 100));
+            document.getElementById('progressFill').style.width = `${percent}%`;
+            document.getElementById('progressFill').textContent = `${percent}%`;
+            document.getElementById('progressText').textContent =
+                `Uploaded ${i + 1} of ${chunks.length} batches (${percent}%)`;
 
-            // Handle upload completion
-            xhr.onload = function () {
-                console.log('Upload complete. Response text:', xhr.responseText);
-
-                if (xhr.status === 200) {
-                    try {
-                        const data = JSON.parse(xhr.responseText);
-                        console.log('Parsed response:', data);
-
-                        if (data.job_id) {
-                            currentJobId = data.job_id;
-                            showSuccess(`Analyzing ${files.length} photos...`);
-                            document.getElementById('progressFill').style.width = `0%`;
-                            document.getElementById('progressFill').textContent = `0%`;
-                            document.getElementById('progressText').textContent = `Processing images...`;
-                            startPolling();  // ✅ continue to analysis progress
-                        } else {
-                            console.error('Unexpected response, missing job_id:', data);
-                            showError('Unexpected response from server. Check console for details.');
-                            // ❌ Temporarily disable resetAll() for debugging
-                            // resetAll();
-                        }
-                    } catch (err) {
-                        console.error('Error parsing server response:', err, xhr.responseText);
-                        showError('Server response could not be parsed. See console.');
-                        // resetAll();
-                    }
-                } else {
-                    console.error('Upload failed with status:', xhr.status, xhr.responseText);
-                    showError(`Upload failed (status ${xhr.status}). Check console.`);
-                    // resetAll();
-                }
-            };
-
-            xhr.onerror = function () {
-                console.error('Network error during upload.');
-                showError('Network error during upload. Check console for details.');
-                // resetAll();
-            };
-
-            xhr.send(formData);
+        } catch (error) {
+            console.error('Upload chunk error:', error);
+            showError(`Chunk ${i + 1} failed: ${error.message}`);
+            return;
         }
+    }
+
+    showSuccess('All chunks uploaded. Starting analysis...');
+    document.getElementById('progressText').textContent = 'Starting analysis...';
+
+    // Start polling backend for analysis progress
+    startPolling();
+}
 
         // Poll for job status and update progress bar
         function startPolling() {
