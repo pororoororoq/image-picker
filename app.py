@@ -20,6 +20,18 @@ import traceback
 import tempfile
 import time
 
+def update_progress(job_dir, processed, total):
+    """Write incremental progress updates to status.json."""
+    import json, os
+    status = {
+        "status": "processing",
+        "progress": round((processed / total) * 100, 2),
+        "processed_files": processed,
+        "total_files": total
+    }
+    with open(os.path.join(job_dir, "status.json"), "w") as f:
+        json.dump(status, f)
+
 # Try to import gradio_client (but we won't actually use it on Render)
 try:
     from gradio_client import Client, handle_file
@@ -142,11 +154,12 @@ def upload_files():
         uploaded_files = request.files.getlist("files[]")
         saved_files = []
 
-        for file in uploaded_files:
+        for i, file in enumerate(uploaded_files):
             filename = secure_filename(file.filename)
             save_path = os.path.join(job_dir, filename)
             file.save(save_path)
             saved_files.append(filename)
+            update_progress(job_dir, i + 1, len(filename))
 
         # if this is the first chunk, you can initialize metadata
         if is_new_job:
@@ -164,6 +177,41 @@ def upload_files():
     except Exception as e:
         print("Upload error:", e)
         return jsonify({"error": str(e)}), 500
+
+import json
+import os
+from flask import jsonify
+
+@app.route("/status/<job_id>", methods=["GET"])
+def check_status(job_id):
+    """
+    Returns the progress of the given job.
+    Reads from uploads/<job_id>/status.json if it exists.
+    """
+    job_dir = os.path.join("uploads", job_id)
+    status_file = os.path.join(job_dir, "status.json")
+
+    # Check if the job directory exists
+    if not os.path.exists(job_dir):
+        return jsonify({"status": "error", "error": "Job not found"}), 404
+
+    # If a status file exists, return its contents
+    if os.path.exists(status_file):
+        try:
+            with open(status_file, "r") as f:
+                data = json.load(f)
+            return jsonify(data)
+        except Exception as e:
+            print("Error reading status.json:", e)
+            return jsonify({"status": "error", "error": "Failed to read progress"}), 500
+
+    # Default (no file yet)
+    return jsonify({
+        "status": "processing",
+        "progress": 0,
+        "processed_files": 0,
+        "total_files": 0
+    })
 
 def call_huggingface_api(image_path):
     """Call HuggingFace Space API using gradio_client with file() wrapper"""
