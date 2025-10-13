@@ -556,31 +556,57 @@
                 formData.append('files[]', file);
             }
 
-            // Prepare XHR so we can monitor progress
+            // Hide upload section and show progress bar
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressFill').textContent = '0%';
+            document.getElementById('progressText').textContent = `Uploading 0%`;
+            hideError();
+
             const xhr = new XMLHttpRequest();
             xhr.open('POST', `${API_URL}/upload`, true);
 
+            // Track upload progress
             xhr.upload.onprogress = function (e) {
                 if (e.lengthComputable) {
                     const percent = Math.round((e.loaded / e.total) * 100);
-                    document.getElementById('progressSection').style.display = 'block';
                     document.getElementById('progressFill').style.width = `${percent}%`;
                     document.getElementById('progressFill').textContent = `${percent}%`;
                     document.getElementById('progressText').textContent = `Uploading ${percent}%`;
                 }
             };
 
+            // Handle upload completion
             xhr.onload = function () {
                 if (xhr.status === 200) {
-                    const data = JSON.parse(xhr.responseText);
-                    if (data.job_id) {
-                        currentJobId = data.job_id;
-                        showSuccess(`Analyzing ${files.length} photos...`);
-                        startPolling();  // continue with your current analysis progress
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        if (data.job_id) {
+                            currentJobId = data.job_id;
+                            showSuccess(`Analyzing ${files.length} photos...`);
+                            document.getElementById('progressFill').style.width = `0%`;
+                            document.getElementById('progressFill').textContent = `0%`;
+                            document.getElementById('progressText').textContent = `Processing images...`;
+                            startPolling(); // ✅ continues analysis as before
+                        } else {
+                            showError('Unexpected response from server.');
+                            resetAll();
+                        }
+                    } catch (err) {
+                        console.error('Error parsing response:', err);
+                        showError('Server response could not be parsed.');
+                        resetAll();
                     }
                 } else {
-                    showError('Upload failed.');
+                    showError(`Upload failed with status ${xhr.status}.`);
+                    resetAll();
                 }
+            };
+
+            xhr.onerror = function () {
+                showError('Network error during upload.');
+                resetAll();
             };
 
             xhr.send(formData);
