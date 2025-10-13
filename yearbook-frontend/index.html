@@ -549,77 +549,114 @@
 
         // Handle file upload
 
-async function handleFiles(files) {
-    if (files.length === 0) return;
+        async function handleFiles(files) {
+            if (files.length === 0) return;
 
-    const formData = new FormData();
-    for (let file of files) {
-        formData.append('files[]', file);
-    }
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('files[]', file);
+            }
 
-    // Hide upload section and show progress bar
-    document.getElementById('uploadSection').style.display = 'none';
-    document.getElementById('progressSection').style.display = 'block';
-    document.getElementById('progressFill').style.width = '0%';
-    document.getElementById('progressFill').textContent = '0%';
-    document.getElementById('progressText').textContent = `Uploading 0%`;
-    hideError();
+            // Hide upload section and show progress bar
+            document.getElementById('uploadSection').style.display = 'none';
+            document.getElementById('progressSection').style.display = 'block';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressFill').textContent = '0%';
+            document.getElementById('progressText').textContent = `Uploading 0%`;
+            hideError();
 
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${API_URL}/upload`, true);
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${API_URL}/upload`, true);
 
-    // Track upload progress
-    xhr.upload.onprogress = function (e) {
-        if (e.lengthComputable) {
-            const percent = Math.round((e.loaded / e.total) * 100);
-            document.getElementById('progressFill').style.width = `${percent}%`;
-            document.getElementById('progressFill').textContent = `${percent}%`;
-            document.getElementById('progressText').textContent = `Uploading ${percent}%`;
-        }
-    };
+            // Track upload progress
+            xhr.upload.onprogress = function (e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    document.getElementById('progressFill').style.width = `${percent}%`;
+                    document.getElementById('progressFill').textContent = `${percent}%`;
+                    document.getElementById('progressText').textContent = `Uploading ${percent}%`;
+                }
+            };
 
-    // Handle upload completion
-    xhr.onload = function () {
-        console.log('Upload complete. Response text:', xhr.responseText);
+            // Handle upload completion
+            xhr.onload = function () {
+                console.log('Upload complete. Response text:', xhr.responseText);
 
-        if (xhr.status === 200) {
-            try {
-                const data = JSON.parse(xhr.responseText);
-                console.log('Parsed response:', data);
+                if (xhr.status === 200) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        console.log('Parsed response:', data);
 
-                if (data.job_id) {
-                    currentJobId = data.job_id;
-                    showSuccess(`Analyzing ${files.length} photos...`);
-                    document.getElementById('progressFill').style.width = `0%`;
-                    document.getElementById('progressFill').textContent = `0%`;
-                    document.getElementById('progressText').textContent = `Processing images...`;
-                    startPolling();  // ✅ continue to analysis progress
+                        if (data.job_id) {
+                            currentJobId = data.job_id;
+                            showSuccess(`Analyzing ${files.length} photos...`);
+                            document.getElementById('progressFill').style.width = `0%`;
+                            document.getElementById('progressFill').textContent = `0%`;
+                            document.getElementById('progressText').textContent = `Processing images...`;
+                            startPolling();  // ✅ continue to analysis progress
+                        } else {
+                            console.error('Unexpected response, missing job_id:', data);
+                            showError('Unexpected response from server. Check console for details.');
+                            // ❌ Temporarily disable resetAll() for debugging
+                            // resetAll();
+                        }
+                    } catch (err) {
+                        console.error('Error parsing server response:', err, xhr.responseText);
+                        showError('Server response could not be parsed. See console.');
+                        // resetAll();
+                    }
                 } else {
-                    console.error('Unexpected response, missing job_id:', data);
-                    showError('Unexpected response from server. Check console for details.');
-                    // ❌ Temporarily disable resetAll() for debugging
+                    console.error('Upload failed with status:', xhr.status, xhr.responseText);
+                    showError(`Upload failed (status ${xhr.status}). Check console.`);
                     // resetAll();
                 }
-            } catch (err) {
-                console.error('Error parsing server response:', err, xhr.responseText);
-                showError('Server response could not be parsed. See console.');
+            };
+
+            xhr.onerror = function () {
+                console.error('Network error during upload.');
+                showError('Network error during upload. Check console for details.');
                 // resetAll();
-            }
-        } else {
-            console.error('Upload failed with status:', xhr.status, xhr.responseText);
-            showError(`Upload failed (status ${xhr.status}). Check console.`);
-            // resetAll();
+            };
+
+            xhr.send(formData);
         }
-    };
 
-    xhr.onerror = function () {
-        console.error('Network error during upload.');
-        showError('Network error during upload. Check console for details.');
-        // resetAll();
-    };
+        // Poll for job status and update progress bar
+        function startPolling() {
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_URL}/status/${currentJobId}`, {
+                        mode: 'cors'
+                    });
 
-    xhr.send(formData);
-}
+                    if (!response.ok) {
+                        throw new Error('Failed to get status');
+                    }
+
+                    const data = await response.json();
+
+                    // Update progress display
+                    const progress = Math.round(data.progress || 0);
+                    document.getElementById('progressFill').style.width = `${progress}%`;
+                    document.getElementById('progressFill').textContent = `${progress}%`;
+                    document.getElementById('progressText').textContent =
+                        `Processing image ${data.processed_files} of ${data.total_files}...`;
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollInterval);
+                        loadResults();
+                    } else if (data.status === 'error') {
+                        clearInterval(pollInterval);
+                        showError('Analysis failed: ' + (data.error || 'Unknown error'));
+                        resetAll();
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    clearInterval(pollInterval);
+                    showError('Lost connection to backend. Please refresh and try again.');
+                }
+            }, 1000); // check every 1 second
+        }
 
         // Load and display results
         async function loadResults() {
