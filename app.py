@@ -201,23 +201,32 @@ def upload_files():
                 should_start = True
                 print(f"Small upload detected, assuming final chunk")
         
-        if should_start and job_id not in processing_jobs:
-            # Start analysis if not already running
-            print(f"Starting analysis for job {job_id} with {len(all_files)} files")
-            
-            # Create job and start analysis
-            job = AnalysisJob(job_id, len(all_files))
-            processing_jobs[job_id] = job
-            
-            # Start analysis in background
-            thread = threading.Thread(
-                target=analyze_photos_background,
-                args=(job_id, job_dir)
-            )
-            thread.daemon = True
-            thread.start()
-            
-            analysis_started = True
+        if should_start:
+            # Check if already processing
+            if job_id in processing_jobs and processing_jobs[job_id].status == 'processing':
+                print(f"Job {job_id} already processing")
+                analysis_started = False
+            else:
+                # Start analysis
+                print(f"Starting analysis for job {job_id} with {len(all_files)} files")
+                
+                # Create job and add to tracking BEFORE starting thread
+                job = AnalysisJob(job_id, len(all_files))
+                processing_jobs[job_id] = job
+                
+                # Write initial status file
+                update_progress(job_dir, 0, len(all_files), 'analysis')
+                
+                # Start analysis in background
+                thread = threading.Thread(
+                    target=analyze_photos_background,
+                    args=(job_id, job_dir)
+                )
+                thread.daemon = True
+                thread.start()
+                
+                analysis_started = True
+                print(f"Analysis thread started for job {job_id}")
             
             return jsonify({
                 'job_id': job_id,
@@ -424,48 +433,69 @@ def simple_fallback_analysis(filepath, filename):
             width, height = img.size
             megapixels = (width * height) / 1_000_000
             
-            # Basic scoring
-            aesthetic_score = 5.0 + min(megapixels / 2, 2.5)
+            # More conservative aesthetic scoring (centered around 5-6)
+            base_score = 5.0
             
-            # Add variety
+            # Small bonus for resolution (max +1.0 instead of +2.5)
+            if megapixels >= 8:
+                resolution_bonus = 1.0
+            elif megapixels >= 4:
+                resolution_bonus = 0.7
+            elif megapixels >= 2:
+                resolution_bonus = 0.4
+            else:
+                resolution_bonus = 0
+            
+            # Add controlled variety using hash (±1.5 range instead of ±1.0)
             file_hash = hashlib.md5(filename.encode()).hexdigest()
-            hash_value = int(file_hash[:4], 16)
-            variety = (hash_value % 20 - 10) / 10.0
-            aesthetic_score = max(1, min(10, aesthetic_score + variety))
+            hash_value = int(file_hash[:8], 16)  # Use more bits for better distribution
+            variety = ((hash_value % 300) - 150) / 100.0  # Range: -1.5 to +1.5
             
-            # Blur estimation
+            aesthetic_score = base_score + resolution_bonus + variety
+            aesthetic_score = max(2, min(8.5, aesthetic_score))  # Cap at 8.5 for fallback
+            
+            # Blur estimation remains the same
             file_size = os.path.getsize(filepath) / 1024  # KB
             size_per_megapixel = file_size / megapixels if megapixels > 0 else 0
             
             if size_per_megapixel > 150:
-                blur_score = 180
+                blur_score = 150
                 blur_category = 'sharp'
             elif size_per_megapixel > 80:
-                blur_score = 100
+                blur_score = 90
                 blur_category = 'slightly_blurry'
             else:
-                blur_score = 50
+                blur_score = 40
                 blur_category = 'blurry'
             
-            # Composition score
-            composition_score = 5.0 + (hash_value % 30 - 15) / 5.0
-            composition_score = max(1, min(10, composition_score))
+            # More conservative composition score (centered around 5)
+            composition_variety = ((hash_value >> 8) % 200 - 100) / 50.0  # Range: -2 to +2
+            composition_score = 5.0 + composition_variety
+            composition_score = max(3, min(7, composition_score))  # Cap at 7 for fallback
             
             # Combined score
             combined_score = (aesthetic_score * 0.4 + 
                             (blur_score/20) * 0.3 + 
                             composition_score * 0.3)
             
-            # Recommendation
-            if combined_score >= 7:
+            # More conservative recommendations
+            if combined_score >= 7.5:
                 recommendation = 'use'
-                action = 'Ready to use (fallback analysis)'
-            elif combined_score >= 5:
+                action = 'Acceptable (fallback analysis - review recommended)'
+            elif combined_score >= 5.5:
                 recommendation = 'maybe'
-                action = 'Manual review recommended (fallback)'
+                action = 'Manual review needed (fallback analysis)'
             else:
                 recommendation = 'skip'
-                action = 'Below threshold (fallback)'
+                action = 'Below threshold (fallback analysis)'
+            
+            # Rating based on aesthetic score
+            if aesthetic_score >= 7:
+                aesthetic_rating = 'good'
+            elif aesthetic_score >= 5:
+                aesthetic_rating = 'fair'
+            else:
+                aesthetic_rating = 'poor'
             
             return {
                 'filename': filename,
@@ -474,7 +504,7 @@ def simple_fallback_analysis(filepath, filename):
                 'blur_category': blur_category,
                 'composition_score': round(composition_score, 2),
                 'combined_score': round(combined_score, 2),
-                'aesthetic_rating': 'good' if aesthetic_score >= 7 else 'fair',
+                'aesthetic_rating': aesthetic_rating,
                 'recommendation': recommendation,
                 'action': action,
                 'ml_source': 'fallback',
@@ -499,34 +529,65 @@ def simple_fallback_analysis(filepath, filename):
 
 def analyze_photos_background(job_id, folder_path):
     """Background thread to analyze photos"""
+    print(f"\n{'='*60}")
+    print(f"analyze_photos_background started for job {job_id}")
+    print(f"Folder path: {folder_path}")
+    print(f"{'='*60}")
+    
+    # Get or create job
     job = processing_jobs.get(job_id)
     if not job:
+        print(f"Creating new job object for {job_id}")
         job = AnalysisJob(job_id, 0)
         processing_jobs[job_id] = job
     
     try:
-        print(f"\n{'='*60}")
         print(f"Starting analysis for job {job_id}")
         print(f"HuggingFace Space: {HF_SPACE_URL}")
-        print(f"{'='*60}")
         
         # Initialize progress
         update_progress(folder_path, 0, 1, 'analysis')
         
         # Wake up HuggingFace Space
-        print("Checking HuggingFace Space...")
+        print("Waking up HuggingFace Space...")
         try:
-            wake_response = requests.get(HF_SPACE_URL, timeout=10)
+            wake_response = requests.get(HF_SPACE_URL, timeout=15)
             if wake_response.status_code == 200:
                 print("✔ HuggingFace Space is responding")
-                time.sleep(2)  # Give it time to fully wake
+                time.sleep(3)  # Give it more time to fully wake
+            else:
+                print(f"⚠ HuggingFace returned status {wake_response.status_code}")
         except Exception as e:
             print(f"⚠ Could not reach HuggingFace Space: {e}")
+            print("Continuing anyway...")
         
         # Get image files
         image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif'}
-        files = [f for f in os.listdir(folder_path) 
-                if os.path.splitext(f)[1].lower() in image_extensions]
+        files = []
+        
+        # Check if folder exists
+        if not os.path.exists(folder_path):
+            print(f"ERROR: Folder does not exist: {folder_path}")
+            raise FileNotFoundError(f"Upload folder not found: {folder_path}")
+        
+        # List all files in directory
+        all_files_in_dir = os.listdir(folder_path)
+        print(f"Files in directory: {all_files_in_dir}")
+        
+        # Filter for image files
+        for f in all_files_in_dir:
+            if os.path.splitext(f)[1].lower() in image_extensions:
+                if os.path.isfile(os.path.join(folder_path, f)):
+                    files.append(f)
+        
+        print(f"Found {len(files)} image files to process")
+        
+        if len(files) == 0:
+            print("ERROR: No image files found!")
+            job.status = 'error'
+            job.error = 'No image files found to process'
+            update_progress(folder_path, 0, 0, 'error')
+            return
         
         total_files = len(files)
         job.total_files = total_files
@@ -542,6 +603,7 @@ def analyze_photos_background(job_id, folder_path):
         for i, filename in enumerate(files):
             filepath = os.path.join(folder_path, filename)
             print(f"\n[{i+1}/{total_files}] Processing: {filename}")
+            print(f"  Full path: {filepath}")
             
             # Update job state
             job.processed_files = i
@@ -551,10 +613,18 @@ def analyze_photos_background(job_id, folder_path):
             update_progress(folder_path, i, total_files, 'analysis')
             
             try:
+                # Check if file exists
+                if not os.path.exists(filepath):
+                    print(f"  WARNING: File not found: {filepath}")
+                    continue
+                
                 # Try HuggingFace API
+                print("  Calling HuggingFace API...")
                 hf_result = call_huggingface_api(filepath)
                 
                 if hf_result and isinstance(hf_result, dict):
+                    print(f"  Raw HF result keys: {list(hf_result.keys())[:20]}")  # Limit output
+                    
                     # Extract scores from response
                     scores = hf_result.get('scores', {})
                     analysis = hf_result.get('analysis', {})
@@ -578,32 +648,42 @@ def analyze_photos_background(job_id, folder_path):
                             }
                     
                     if scores:
-                        results[filepath] = {
-                            'filename': filename,
-                            'aesthetic_score': float(scores.get('aesthetic_score', 5.0)),
-                            'blur_score': float(scores.get('blur_score', 100)),
-                            'blur_category': analysis.get('blur_category', 'unknown'),
-                            'composition_score': float(scores.get('composition_score', 5.0)),
-                            'combined_score': float(scores.get('combined_score', 5.0)),
-                            'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                            'recommendation': analysis.get('recommendation', 'maybe'),
-                            'action': analysis.get('action', ''),
-                            'ml_source': 'huggingface',
-                            'face_detected': analysis.get('face_detected', False)
-                        }
+                        # Validate and sanity-check the scores
+                        aesthetic = float(scores.get('aesthetic_score', 5.0))
                         
-                        print(f"  ✔ HF scores - A:{results[filepath]['aesthetic_score']:.1f}, "
-                              f"B:{results[filepath]['blur_score']:.0f}, "
-                              f"C:{results[filepath]['composition_score']:.1f}")
+                        # Sanity check
+                        if aesthetic > 9.5 or aesthetic < 1:
+                            print(f"  ⚠ Suspicious aesthetic score: {aesthetic}, using fallback")
+                            results[filepath] = simple_fallback_analysis(filepath, filename)
+                        else:
+                            results[filepath] = {
+                                'filename': filename,
+                                'aesthetic_score': aesthetic,
+                                'blur_score': float(scores.get('blur_score', 100)),
+                                'blur_category': analysis.get('blur_category', 'unknown'),
+                                'composition_score': float(scores.get('composition_score', 5.0)),
+                                'combined_score': float(scores.get('combined_score', 5.0)),
+                                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
+                                'recommendation': analysis.get('recommendation', 'maybe'),
+                                'action': analysis.get('action', ''),
+                                'ml_source': 'huggingface',
+                                'face_detected': analysis.get('face_detected', False)
+                            }
+                            
+                            print(f"  ✔ HF scores - A:{results[filepath]['aesthetic_score']:.1f}, "
+                                  f"B:{results[filepath]['blur_score']:.0f}, "
+                                  f"C:{results[filepath]['composition_score']:.1f}")
                     else:
+                        print(f"  ⚠ No valid scores in HF response, using fallback")
                         results[filepath] = simple_fallback_analysis(filepath, filename)
-                        print("  → Using fallback (no valid HF scores)")
                 else:
+                    print(f"  ⚠ Invalid HF response or call failed, using fallback")
                     results[filepath] = simple_fallback_analysis(filepath, filename)
-                    print("  → Using fallback (HF call failed)")
                     
             except Exception as e:
-                print(f"  ✗ Error: {e}")
+                print(f"  ✗ Error processing {filename}: {e}")
+                import traceback
+                traceback.print_exc()
                 results[filepath] = {
                     'filename': filename,
                     'blur_score': 100,
@@ -621,14 +701,17 @@ def analyze_photos_background(job_id, folder_path):
             # Update progress after processing
             update_progress(folder_path, i + 1, total_files, 'analysis')
             
-            # Free memory
-            gc.collect()
+            # Free memory periodically
+            if i % 5 == 0:
+                gc.collect()
         
         # Mark as completed
         job.processed_files = total_files
         job.results = results
         job.status = 'completed'
         job.phase = 'completed'
+        
+        print(f"\nAnalysis complete. Processed {total_files} files")
         
         # Write final status
         with open(os.path.join(folder_path, "status.json"), "w") as f:
@@ -650,11 +733,13 @@ def analyze_photos_background(job_id, folder_path):
         print(f"Job {job_id} completed successfully!")
         hf_count = sum(1 for r in results.values() if r.get('ml_source') == 'huggingface')
         fallback_count = sum(1 for r in results.values() if r.get('ml_source') == 'fallback')
-        print(f"Summary: {hf_count} via HuggingFace, {fallback_count} via fallback")
+        error_count = sum(1 for r in results.values() if r.get('ml_source') == 'error')
+        print(f"Summary: {hf_count} via HuggingFace, {fallback_count} via fallback, {error_count} errors")
         print(f"{'='*60}\n")
         
     except Exception as e:
         print(f"Fatal error in job {job_id}: {e}")
+        import traceback
         traceback.print_exc()
         
         job.status = 'error'
@@ -662,13 +747,16 @@ def analyze_photos_background(job_id, folder_path):
         job.error = str(e)
         
         # Write error status
-        with open(os.path.join(folder_path, "status.json"), "w") as f:
-            json.dump({
-                "status": "error",
-                "phase": "error",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }, f)
+        try:
+            with open(os.path.join(folder_path, "status.json"), "w") as f:
+                json.dump({
+                    "status": "error",
+                    "phase": "error",
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }, f)
+        except:
+            print("Could not write error status file")
 
 @app.route('/results/<job_id>')
 def get_results(job_id):
