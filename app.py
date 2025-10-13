@@ -148,6 +148,7 @@ def upload_files():
         # Get parameters
         job_id = request.args.get('job_id')
         total_files = request.args.get('total_files')
+        start_analysis_now = request.args.get('start_analysis') == 'true'
         
         # Create new job if needed
         if not job_id:
@@ -182,8 +183,26 @@ def upload_files():
         
         # Check if we should start analysis
         analysis_started = False
-        if total_files and len(all_files) >= int(total_files):
-            # All files uploaded, start analysis
+        should_start = False
+        
+        # Determine if we should start analysis
+        if start_analysis_now:
+            # Explicitly requested to start
+            should_start = True
+            print(f"Explicit request to start analysis")
+        elif total_files and len(all_files) >= int(total_files):
+            # All expected files uploaded
+            should_start = True
+            print(f"All expected files uploaded")
+        elif not total_files and len(all_files) > 0:
+            # No total specified, but we have files - check if this is the last chunk
+            # by seeing if it's a small upload (likely final chunk)
+            if len(uploaded_files) < 5:  # Assume small uploads are final
+                should_start = True
+                print(f"Small upload detected, assuming final chunk")
+        
+        if should_start and job_id not in processing_jobs:
+            # Start analysis if not already running
             print(f"Starting analysis for job {job_id} with {len(all_files)} files")
             
             # Create job and start analysis
@@ -208,13 +227,14 @@ def upload_files():
                 'analysis_started': True
             }), 200
         
-        # Not all files uploaded yet
+        # Not starting analysis yet
         return jsonify({
             'job_id': job_id,
             'saved': len(saved_files),
             'total_saved': len(all_files),
             'message': f'Received {len(saved_files)} files for job {job_id}',
-            'analysis_started': False
+            'analysis_started': False,
+            'hint': 'Call /start_analysis/{job_id} to begin processing'
         }), 200
         
     except Exception as e:

@@ -717,18 +717,18 @@
         }
 
         // Update upload progress bar
-        function updateUploadProgress(percent, currentChunk, totalChunks) {
+        function updateUploadProgress(percent, uploadedFiles, totalFiles) {
             document.getElementById('uploadProgressFill').style.width = `${percent}%`;
             document.getElementById('uploadProgressFill').textContent = `${percent}%`;
             document.getElementById('uploadProgressText').textContent = 
-                `Uploaded batch ${currentChunk} of ${totalChunks} (${percent}%)`;
+                `Uploaded ${uploadedFiles} of ${totalFiles} photos`;
         }
 
         // Mark upload as complete
-        function completeUploadProgress() {
+        function completeUploadProgress(totalFiles) {
             document.getElementById('uploadProgressFill').style.width = '100%';
             document.getElementById('uploadProgressFill').textContent = '100%';
-            document.getElementById('uploadProgressText').textContent = 'Upload complete!';
+            document.getElementById('uploadProgressText').textContent = `All ${totalFiles} photos uploaded successfully!`;
             document.getElementById('uploadCheckmark').style.display = 'inline';
             showSuccess('All files uploaded successfully. Starting analysis...');
         }
