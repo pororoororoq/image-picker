@@ -158,28 +158,45 @@ def upload_files():
         # Setup job directory
         job_dir = os.path.join(app.config['UPLOAD_FOLDER'], job_id)
         os.makedirs(job_dir, exist_ok=True)
+        print(f"Job directory: {job_dir}")
         
         # Get uploaded files
         uploaded_files = request.files.getlist('files[]')
         if not uploaded_files:
             return jsonify({'error': 'No files provided'}), 400
         
+        print(f"Received {len(uploaded_files)} files in this chunk")
+        
         # Save files
         saved_files = []
         for file in uploaded_files:
             if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
+                # Ensure we keep the original extension
+                original_filename = file.filename
+                filename = secure_filename(original_filename)
+                
+                # If secure_filename removed the extension, add it back
+                if '.' not in filename:
+                    original_ext = os.path.splitext(original_filename)[1]
+                    if original_ext:
+                        filename = filename + original_ext
+                
                 save_path = os.path.join(job_dir, filename)
                 file.save(save_path)
                 saved_files.append(filename)
-                print(f"  Saved: {filename}")
+                print(f"  Saved: {filename} -> {save_path}")
+            else:
+                print(f"  Skipped invalid file: {file.filename}")
         
         # Count total files in job directory
-        all_files = [f for f in os.listdir(job_dir) 
-                    if os.path.isfile(os.path.join(job_dir, f)) 
-                    and allowed_file(f)]
+        all_files = []
+        for f in os.listdir(job_dir):
+            full_path = os.path.join(job_dir, f)
+            if os.path.isfile(full_path) and allowed_file(f):
+                all_files.append(f)
         
-        print(f"Job {job_id}: {len(all_files)} total files, expecting {total_files}")
+        print(f"Job {job_id}: {len(all_files)} total files saved, expecting {total_files}")
+        print(f"Files in directory: {all_files}")
         
         # Check if we should start analysis
         analysis_started = False
@@ -187,19 +204,14 @@ def upload_files():
         
         # Determine if we should start analysis
         if start_analysis_now:
-            # Explicitly requested to start
             should_start = True
             print(f"Explicit request to start analysis")
         elif total_files and len(all_files) >= int(total_files):
-            # All expected files uploaded
             should_start = True
-            print(f"All expected files uploaded")
-        elif not total_files and len(all_files) > 0:
-            # No total specified, but we have files - check if this is the last chunk
-            # by seeing if it's a small upload (likely final chunk)
-            if len(uploaded_files) < 5:  # Assume small uploads are final
-                should_start = True
-                print(f"Small upload detected, assuming final chunk")
+            print(f"All expected files uploaded ({len(all_files)}/{total_files})")
+        elif not total_files and len(all_files) > 0 and len(uploaded_files) < 5:
+            should_start = True
+            print(f"Small upload detected, assuming final chunk")
         
         if should_start:
             # Check if already processing
@@ -209,13 +221,22 @@ def upload_files():
             else:
                 # Start analysis
                 print(f"Starting analysis for job {job_id} with {len(all_files)} files")
+                print(f"Files to analyze: {all_files}")
                 
                 # Create job and add to tracking BEFORE starting thread
                 job = AnalysisJob(job_id, len(all_files))
                 processing_jobs[job_id] = job
                 
-                # Write initial status file
-                update_progress(job_dir, 0, len(all_files), 'analysis')
+                # Write initial status file with file count
+                with open(os.path.join(job_dir, "status.json"), "w") as f:
+                    json.dump({
+                        "status": "processing",
+                        "phase": "analysis",
+                        "progress": 0,
+                        "processed_files": 0,
+                        "total_files": len(all_files),
+                        "timestamp": datetime.now().isoformat()
+                    }, f)
                 
                 # Start analysis in background
                 thread = threading.Thread(
@@ -233,7 +254,8 @@ def upload_files():
                 'saved': len(saved_files),
                 'total_saved': len(all_files),
                 'message': f'Upload complete. Analysis started for {len(all_files)} files.',
-                'analysis_started': True
+                'analysis_started': True,
+                'files': all_files  # Include list of files for debugging
             }), 200
         
         # Not starting analysis yet
@@ -243,11 +265,13 @@ def upload_files():
             'total_saved': len(all_files),
             'message': f'Received {len(saved_files)} files for job {job_id}',
             'analysis_started': False,
-            'hint': 'Call /start_analysis/{job_id} to begin processing'
+            'hint': 'Call /start_analysis/{job_id} to begin processing' if len(all_files) > 0 else 'Upload more files',
+            'files': all_files  # Include list of files for debugging
         }), 200
         
     except Exception as e:
         print(f"Upload error: {e}")
+        import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
@@ -311,21 +335,34 @@ def get_job_status(job_id):
     if not os.path.exists(job_dir):
         return jsonify({'error': 'Job not found'}), 404
     
+    # If status file exists, read it
     if os.path.exists(status_file):
         try:
             with open(status_file, 'r') as f:
                 data = json.load(f)
+            
+            # Add debug info
+            image_files = [f for f in os.listdir(job_dir) 
+                          if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+            data['debug_files_found'] = len(image_files)
+            
             return jsonify(data)
         except Exception as e:
             print(f"Error reading status file: {e}")
     
-    # Default status
+    # No status file yet - check if files exist
+    image_files = [f for f in os.listdir(job_dir) 
+                  if os.path.splitext(f)[1].lower() in ALLOWED_EXTENSIONS]
+    
+    # Default status with debug info
     return jsonify({
         'status': 'uploading',
         'phase': 'upload',
         'progress': 0,
         'processed_files': 0,
-        'total_files': 0
+        'total_files': len(image_files),
+        'debug_files_found': len(image_files),
+        'debug_job_dir': job_dir
     })
 
 def call_huggingface_api(image_path):
