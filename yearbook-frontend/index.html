@@ -806,6 +806,10 @@
             }
 
             displayPhotos({ results: resultArray });
+            currentResults = resultArray; // Save results for filters & selections
+            document.getElementById('progressSection').style.display = 'none';
+            document.getElementById('resultsSection').style.display = 'block';
+            document.getElementById('actionBar').style.display = 'flex';
             })
             .catch(error => {
             console.error("Error loading results:", error);
