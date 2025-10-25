@@ -830,9 +830,24 @@
             container.innerHTML = '';
 
             data.results.forEach(photo => {
-                const s = photo.scores || {};
-                const a = photo.analysis || {};
-                const f = photo.face_metrics || {};
+                const s = {
+                aesthetic_laion: photo.aesthetic_score,
+                composition_clip: photo.composition_score,
+                face_sharpness_score: photo.face_sharpness_score,
+                emotion_score: photo.emotion_score,
+                lighting_score: photo.lighting_score,
+                final_score: photo.combined_score
+                };
+
+                const f = {
+                face_count: photo.face_count,
+                face_coverage_ratio: photo.face_coverage_ratio
+                };
+
+                const a = {
+                recommendation: photo.recommendation,
+                action: photo.action
+                };
 
                 const card = document.createElement('div');
                 card.className = `photo-card rec-${a.recommendation || 'none'}`;
