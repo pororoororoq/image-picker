@@ -804,9 +804,16 @@
             } else {
                 console.warn("⚠ Unexpected data format from API:", data);
             }
-
-            displayPhotos({ results: resultArray });
             currentResults = resultArray; // Save results for filters & selections
+            if (data.stats) {
+                document.getElementById('statTotal').textContent = data.stats.total || 0;
+                document.getElementById('statUse').textContent = data.stats.use || 0;
+                document.getElementById('statEnhance').textContent = data.stats.enhance || 0;
+                document.getElementById('statMaybe').textContent = data.stats.maybe || 0;
+                document.getElementById('statSkip').textContent = data.stats.skip || 0;
+            }
+            displayPhotos({ results: resultArray });
+            
             document.getElementById('progressSection').style.display = 'none';
             document.getElementById('resultsSection').style.display = 'block';
             document.getElementById('actionBar').style.display = 'flex';
@@ -911,7 +918,7 @@
                 document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 currentFilter = btn.dataset.filter;
-                displayPhotos();
+                displayPhotos({ results: currentResults });
             });
         });
 
