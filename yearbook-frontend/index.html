@@ -832,49 +832,51 @@
         }
 
         // Display photos in grid
-        function displayPhotos() {
-            const grid = document.getElementById('photoGrid');
-            grid.innerHTML = '';
+        function displayPhotos(data) {
+            const container = document.getElementById('photoGrid');
+            container.innerHTML = '';
 
-            const filtered = currentFilter === 'all' 
-                ? currentResults 
-                : currentResults.filter(p => p.recommendation === currentFilter);
-
-            filtered.forEach(photo => {
-                // Get ML source badge
-                const mlSourceBadge = photo.ml_source === 'huggingface' 
-                    ? '<span class="ml-source-badge ml-hf">HF</span>'
-                    : photo.ml_source === 'local_fallback' || photo.ml_source === 'local_enhanced'
-                    ? '<span class="ml-source-badge ml-local">Local</span>'
-                    : '';
-
-                const displayBlurScore = Math.min(10, photo.blur_score / 15);
+            data.results.forEach(photo => {
+                const s = photo.scores || {};
+                const a = photo.analysis || {};
+                const f = photo.face_metrics || {};
 
                 const card = document.createElement('div');
-                card.className = `photo-card ${selectedPhotos.has(photo.filename) ? 'selected' : ''}`;
+                card.className = `photo-card rec-${a.recommendation || 'none'}`;
+
                 card.innerHTML = `
-                    <img src="${API_URL}/image/${currentJobId}/${photo.filename}" alt="${photo.filename}">
-                    <div class="photo-info">
-                        <div class="photo-filename" title="${photo.filename}">${photo.filename}</div>
-                        <div class="photo-scores">
-                            <span>Blur: <span class="score-badge ${getBlurScoreClass(photo.blur_score)}">${displayBlurScore.toFixed(1)}/10</span></span>
-                            <span>Aesthetic: <span class="score-badge">${photo.aesthetic_score.toFixed(1)}/10</span></span>
-                        </div>
-                        <div class="photo-scores">
-                            <span>Comp: <span class="score-badge">${(photo.composition_score || 5).toFixed(1)}/10</span></span>
-                            <span>Overall: <strong>${photo.combined_score.toFixed(1)}/10</strong>${mlSourceBadge}</span>
-                        </div>
-                        <div class="recommendation rec-${photo.recommendation}">
-                            ${photo.recommendation}
-                        </div>
-                        <div style="font-size: 11px; color: #666; margin-top: 5px; text-align: center;">
-                            ${photo.action || ''}
-                        </div>
+                <img src="${API_URL}/image/${currentJobId}/${photo.filename}" alt="${photo.filename}">
+                <div class="photo-info">
+                    <div class="photo-filename">${photo.filename}</div>
+
+                    <div class="photo-scores">
+                    <span>Aesthetic: <strong>${s.aesthetic_laion?.toFixed(2) || '-'}</strong></span>
+                    <span>Comp: <strong>${s.composition_clip?.toFixed(2) || '-'}</strong></span>
                     </div>
+
+                    <div class="photo-scores">
+                    <span>Sharpness: ${s.face_sharpness_score?.toFixed(2) || '-'}</span>
+                    <span>Emotion: ${s.emotion_score?.toFixed(2) || '-'}</span>
+                    </div>
+
+                    <div class="photo-scores">
+                    <span>Lighting: ${s.lighting_score?.toFixed(2) || '-'}</span>
+                    <span>Overall: <strong>${s.final_score?.toFixed(2) || '-'}</strong></span>
+                    </div>
+
+                    <div class="photo-metrics">
+                    <small>Faces: ${f.face_count || 0}, Coverage: ${(f.face_coverage_ratio * 100).toFixed(1)}%</small>
+                    </div>
+
+                    <div class="recommendation rec-${a.recommendation || 'none'}">
+                    ${a.recommendation || 'N/A'}
+                    </div>
+
+                    <div class="action-text">${a.action || ''}</div>
+                </div>
                 `;
 
-                card.addEventListener('click', () => toggleSelection(photo.filename, card));
-                grid.appendChild(card);
+                container.appendChild(card);
             });
         }
 

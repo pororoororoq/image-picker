@@ -676,62 +676,38 @@ def analyze_photos_background(job_id, folder_path):
                 hf_result = call_huggingface_api(filepath)
                 
                 if hf_result and isinstance(hf_result, dict):
-                    print(f"  Raw HF result keys: {list(hf_result.keys())[:20]}")  # Limit output
-                    
-                    # Extract scores from response
-                    scores = hf_result.get('scores', {})
-                    analysis = hf_result.get('analysis', {})
-                    
-                    # Handle different response formats
-                    if not scores:
-                        if 'aesthetic_score' in hf_result:
-                            scores = {
-                                'aesthetic_score': hf_result.get('aesthetic_score', 5.0),
-                                'blur_score': hf_result.get('blur_score', 100),
-                                'composition_score': hf_result.get('composition_score', 5.0),
-                                'combined_score': hf_result.get('combined_score', 5.0)
-                            }
-                        if 'blur_category' in hf_result:
-                            analysis = {
-                                'blur_category': hf_result.get('blur_category', 'unknown'),
-                                'aesthetic_rating': hf_result.get('aesthetic_rating', 'fair'),
-                                'recommendation': hf_result.get('recommendation', 'maybe'),
-                                'action': hf_result.get('action', ''),
-                                'face_detected': hf_result.get('face_detected', False)
-                            }
-                    
+                    print(f"  Raw HF result keys: {list(hf_result.keys())[:20]}")
+
+                    image_info = hf_result.get("image_info", {})
+                    models = hf_result.get("models", {})
+                    scores = hf_result.get("scores", {})
+                    face_metrics = hf_result.get("face_metrics", {})
+                    analysis = hf_result.get("analysis", {})
+
                     if scores:
-                        # Validate and sanity-check the scores
-                        aesthetic = float(scores.get('aesthetic_score', 5.0))
-                        
-                        # Sanity check
-                        if aesthetic > 9.5 or aesthetic < 1:
-                            print(f"  ⚠ Suspicious aesthetic score: {aesthetic}, using fallback")
-                            results[filepath] = simple_fallback_analysis(filepath, filename)
-                        else:
-                            results[filepath] = {
-                                'filename': filename,
-                                'aesthetic_score': aesthetic,
-                                'blur_score': float(scores.get('blur_score', 100)),
-                                'blur_category': analysis.get('blur_category', 'unknown'),
-                                'composition_score': float(scores.get('composition_score', 5.0)),
-                                'combined_score': float(scores.get('combined_score', 5.0)),
-                                'aesthetic_rating': analysis.get('aesthetic_rating', 'fair'),
-                                'recommendation': analysis.get('recommendation', 'maybe'),
-                                'action': analysis.get('action', ''),
-                                'ml_source': 'huggingface',
-                                'face_detected': analysis.get('face_detected', False)
-                            }
-                            
-                            print(f"  ✔ HF scores - A:{results[filepath]['aesthetic_score']:.1f}, "
-                                  f"B:{results[filepath]['blur_score']:.0f}, "
-                                  f"C:{results[filepath]['composition_score']:.1f}")
+                        results[filepath] = {
+                            "filename": filename,
+                            "aesthetic_score": float(scores.get("aesthetic_laion", 0)),
+                            "composition_score": float(scores.get("composition_clip", 0)),
+                            "face_coverage_score": float(scores.get("face_coverage_score", 0)),
+                            "face_count_score": float(scores.get("face_count_score", 0)),
+                            "face_sharpness_score": float(scores.get("face_sharpness_score", 0)),
+                            "emotion_score": float(scores.get("emotion_score", 0)),
+                            "face_position_score": float(scores.get("face_position_score", 0)),
+                            "lighting_score": float(scores.get("lighting_score", 0)),
+                            "combined_score": float(scores.get("final_score", 0)),
+                            "face_count": face_metrics.get("face_count", 0),
+                            "face_coverage_ratio": face_metrics.get("face_coverage_ratio", 0),
+                            "face_sharpness_raw": face_metrics.get("face_sharpness_raw", 0),
+                            "top_emotion": face_metrics.get("top_emotion", "unknown"),
+                            "recommendation": analysis.get("recommendation", "maybe"),
+                            "action": analysis.get("action", ""),
+                            "ml_source": "huggingface",
+                        }
+                        print(f"  ✔ Parsed HF scores - Final: {results[filepath]['combined_score']:.2f}, Faces: {results[filepath]['face_count']}")
                     else:
-                        print(f"  ⚠ No valid scores in HF response, using fallback")
+                        print("  ⚠ No valid scores in HF response, using fallback")
                         results[filepath] = simple_fallback_analysis(filepath, filename)
-                else:
-                    print(f"  ⚠ Invalid HF response or call failed, using fallback")
-                    results[filepath] = simple_fallback_analysis(filepath, filename)
                     
             except Exception as e:
                 print(f"  ✗ Error processing {filename}: {e}")
