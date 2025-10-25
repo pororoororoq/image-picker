@@ -786,42 +786,31 @@
 
         // Load and display results
         async function loadResults() {
-            try {
-                const response = await fetch(`${API_URL}/results/${currentJobId}`, {
-                    mode: 'cors'
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Failed to load results');
-                }
-                
-                const data = await response.json();
+        fetch(`${API_URL}/results/${currentJobId}`)
+            .then(response => response.json())
+            .then(data => {
+            console.log("✅ Results API response:", data);
 
-                currentResults = data.results;
-                
-                // Update stats
-                document.getElementById('statTotal').textContent = data.stats.total;
-                document.getElementById('statUse').textContent = data.stats.use;
-                document.getElementById('statEnhance').textContent = data.stats.enhance;
-                document.getElementById('statMaybe').textContent = data.stats.maybe;
-                document.getElementById('statSkip').textContent = data.stats.skip;
+            // Handle both formats gracefully
+            let resultArray = [];
 
-                // Display photos
-                displayPhotos();
-
-                // Show results section, hide progress
-                setTimeout(() => {
-                    document.getElementById('progressSection').style.display = 'none';
-                    document.getElementById('resultsSection').style.display = 'block';
-                    document.getElementById('actionBar').style.display = 'flex';
-                }, 1000); // Brief delay to show completed state
-                
-                showSuccess('Analysis complete! Your photos are ready for review.');
-
-            } catch (error) {
-                console.error('Error loading results:', error);
-                showError('Failed to load results. Please try again.');
+            if (Array.isArray(data)) {
+                resultArray = data;
+            } else if (data && Array.isArray(data.results)) {
+                resultArray = data.results;
+            } else if (data && typeof data === "object") {
+                // some APIs might wrap the dict differently
+                resultArray = Object.values(data);
+            } else {
+                console.warn("⚠ Unexpected data format from API:", data);
             }
+
+            displayPhotos({ results: resultArray });
+            })
+            .catch(error => {
+            console.error("Error loading results:", error);
+            alert("Failed to load results. Please try again.");
+            });
         }
 
         // Helper function to get blur score color class
